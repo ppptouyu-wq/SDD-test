@@ -1,0 +1,76 @@
+# 接入真实数据源的配置模板
+#
+# 用法：复制为 config.local.yaml（已被 .gitignore 忽略）后填入自己的值。
+#     cp config.github.yaml.example config.local.yaml
+#     python main.py --config config.local.yaml --date 2026-04-24
+#
+# 凭据一律走环境变量，**不要**写在本文件里（design.md §6.2 安全约束）：
+#     GITHUB_TOKEN       GitHub 只读 token（公有仓库可留空，但配额仅 60 次/小时）
+#     LARK_APP_ID        飞书应用 app_id
+#     LARK_APP_SECRET    飞书应用 app_secret
+#     SMTP_PASSWORD      SMTP 授权码（QQ 邮箱需用「授权码」而非登录密码）
+
+github:
+  # [owner]/[repo] 形式，可多个
+  repos:
+    - "your-name/your-repo"
+  api_base: "https://api.github.com"
+  timeout: 15
+  max_retries: 3
+  retry_interval: 5
+
+lark:
+  # 任务清单 ID。实测该参数被接口正常接受（传错值也不报错，只是返回 0 条）。
+  project_id: ""
+  # 机器人推送目标。机器人需先被拉进目标群。
+  chat_id: "oc_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  # chat_id → 推群；open_id → 单聊
+  receive_id_type: "chat_id"
+  # 读群消息历史的身份：app（默认，实测可用）或 user（需先跑 OAuth 授权）
+  auth_mode: "app"
+  user_token_file: "data/lark_user_token.json"
+  # 群消息关键词过滤（空列表 = 不过滤）
+  keywords:
+    - "项目"
+    - "需求"
+    - "bug"
+    - "发布"
+  api_base: "https://open.feishu.cn/open-apis"
+  timeout: 10
+  max_retries: 3
+
+email:
+  # QQ 邮箱：smtp.qq.com:465（SSL）。密码用环境变量 SMTP_PASSWORD 注入。
+  smtp_host: "smtp.qq.com"
+  smtp_port: 465
+  smtp_user: "your-account@qq.com"
+  use_ssl: true
+  sender: "your-account@qq.com"
+  recipients:
+    - "leader@example.com"
+
+report:
+  team_name: "你的团队名"
+  timezone: "Asia/Shanghai"
+  # 敏感词黑名单：命中即从日报中剔除（design.md §6.2）
+  sensitive_keywords:
+    - "薪资"
+    - "绩效"
+    - "裁员"
+    - "期权"
+  # 法定节假日：命中则跳过日报生成（proposal.md §3.3）
+  holidays: []
+
+storage_path: "data/reports.db"
+
+# 成员身份映射表（书图 5-7）：把外部系统的账号映射到"人"
+#   github → 匹配 CommitRecord.author（GitHub 用户名）
+#   lark   → 匹配 TaskRecord.assignee / MessageRecord.sender
+# **映射不上的人会被聚合层丢弃**（不会凭空造成员）
+members:
+  - name: "张三"
+    github: "zhangsan"
+    lark: "zhangsan@company.com"
+  - name: "李四"
+    github: "lisi-dev"
+    lark: "lisi@company.com"

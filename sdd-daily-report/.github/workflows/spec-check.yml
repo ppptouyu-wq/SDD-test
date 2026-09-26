@@ -1,0 +1,89 @@
+name: spec-check
+
+# 规范 CI：让机器帮你盯规范（第 9 章 9.6.3 最小规范 CI 工作流）
+# 三个层次的自动化规范检查：
+#   层次 1 —— 规范存在性：三份核心规范是否齐备
+#   层次 2 —— 规范与代码一致性：接口契约中的函数是否都在实现中存在
+#   层次 3 —— 术语与格式合规：ADR 只追加、验收标准必须可测试、不得出现排除范围内的功能
+
+on:
+  pull_request:
+    paths:
+      - "specs/**"
+      - "**/*.py"
+      - ".github/workflows/spec-check.yml"
+
+jobs:
+  spec-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 准备
+        run: |
+          errors=0
+
+      - name: 层次 1 —— 规范存在性检查
+        run: |
+          errors=0
+          for f in specs/proposal.md specs/design.md specs/tasks.md; do
+            if [ ! -f "$f" ]; then
+              echo "::error::缺少必需规范文件 $f"
+              errors=$((errors+1))
+            fi
+          done
+          # proposal.md 必须包含三层结构与验收标准
+          grep -q "## 3. 验收标准" specs/proposal.md || { echo "::error::proposal.md 缺少验收标准章节"; errors=$((errors+1)); }
+          grep -q -- "- \[ \]" specs/proposal.md || { echo "::error::proposal.md 没有可测试的验收标准清单"; errors=$((errors+1)); }
+          grep -q "## 2. 功能范围" specs/proposal.md || { echo "::error::proposal.md 缺少功能范围章节"; errors=$((errors+1)); }
+          exit $((errors > 0))
+
+      - name: 层次 2 —— 规范与代码一致性检查
+        run: |
+          errors=0
+          # design.md 契约中声明的三个采集入口必须都有实现文件
+          for m in github lark_task lark_msg; do
+            if ! grep -rq "def collect" collector/$m.py 2>/dev/null; then
+              echo "::error::collector/$m.py 未实现 design.md §4.1 约定的 collect()"
+              errors=$((errors+1))
+            fi
+          done
+          # 生成层与推送层接口
+          grep -q "def generate" generator/formatter.py || { echo "::error::generator 未实现 generate()"; errors=$((errors+1)); }
+          grep -q "def send" notifier/email.py || { echo "::error::email 未实现 send()"; errors=$((errors+1)); }
+          grep -q "def send" notifier/lark_bot.py || { echo "::error::lark_bot 未实现 send()"; errors=$((errors+1)); }
+          exit $((errors > 0))
+
+      - name: 层次 3 —— 术语与范围合规检查
+        run: |
+          errors=0
+          # specs/ 下的规范文件必须在同一 PR 中一并变更（提示性检查）
+          if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -q "^specs/"; then
+            echo "本 PR 包含规范变更，将同时进行规范审查"
+          fi
+          # 不得实现 proposal.md §2.2 明确排除的功能
+          if grep -rniE "智能摘要|多租户|移动端" --include="*.py" collector generator notifier shared main.py 2>/dev/null; then
+            echo "::error::检测到 proposal.md §2.2 排除范围内的功能"
+            errors=$((errors+1))
+          fi
+          # 禁止硬编码密钥
+          if grep -rnE "ghp_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}" --include="*.py" --include="*.yaml" . 2>/dev/null | grep -v ".env.example"; then
+            echo "::error::检测到疑似硬编码密钥"
+            errors=$((errors+1))
+          fi
+          exit $((errors > 0))
+
+      - name: 层次 4 —— 多工具规范配置同步检查
+        run: |
+          # 四类工具的规则文件必须与 CLAUDE.md 同源，否则不同工具的用户遵守不同规范
+          python scripts/generate_tool_configs.py --check
+
+      - name: 层次 5 —— 契约一致性检查
+        run: |
+          # api-spec.yaml 声明的字段/签名必须与实现一致（防规范漂移）
+          python -m pytest tests/test_contracts.py -q
+
+      - name: 层次 6 —— 规范审查（生成—评审模式）
+        run: |
+          # 第 8 章 8.2：按第 4 章规范质量检查清单自动审查三份规范
+          python -m sdd_agents review

@@ -1,0 +1,416 @@
+openapi: 3.0.3
+
+info:
+  title: 智能日报生成器 — 接口契约（api-spec.yaml）
+  version: 1.1.0
+  description: |
+    本书 SDD 六阶段工作流【阶段三：接口契约】的产物之一（与 data-models.md 配套）。
+
+    本项目是可被 Cron 调用的命令行工具，**不是 Web 服务**，因此本文件的作用不是描述
+    HTTP 端点，而是用语言无关的方式固化两件事：
+
+      1. `components.schemas` —— 模块之间流动的数据结构（各字段的类型与必填性），
+         任何实现都必须遵守；这就是"规范必须先于代码"的具体载体。
+      2. `x-module-contracts` —— 每个模块对外暴露的函数签名（名称/参数/返回类型），
+         即 design.md §4 的机器可读版本。
+
+    存在意义（一次真实教训）：实现期曾出现 GitHub 列表接口不返回 `stats`/`files`，
+    而代码用 `stats.get("additions", 0)` 静默兜底为 0，导致净增删行数与文件数恒为 0。
+    根因就是契约只写在人看的文档里、没有把字段设为"必填"。本文件把这三个字段标记为
+    required，实现若拿不到值必须显式回查或报错，不允许静默填 0。
+
+    对应关系：
+      - data-models.md  = 字段级说明（给人看，含中文注释）
+      - api-spec.yaml   = 结构化契约（给工具与 AI 看，可用于校验）
+      - design.md §4    = 接口契约的叙述版（给人与 AI 看的上下文）
+
+# 本项目无可调用的 HTTP 端点：对外入口是 `python main.py`。
+# 保留 paths 以满足 OpenAPI 3.0 结构要求，内容明确标注为不适用。
+paths:
+  /_not-applicable:
+    get:
+      operationId: notApplicable
+      summary: 本项目不是 Web 服务，无 HTTP 端点
+      description: |
+        日报生成由 Cron 触发 `python main.py` 完成。此处仅占位以满足 OpenAPI 结构要求。
+        模块级契约见 `x-module-contracts`。
+      responses:
+        "501":
+          description: 不适用
+
+components:
+  schemas:
+
+    # ---------- 采集层记录 ----------
+    CommitRecord:
+      type: object
+      description: 代码提交记录（书图 5-6）
+      required: [author, message, timestamp, repo, additions, deletions, files_changed]
+      properties:
+        author:
+          type: string
+          description: 提交者（GitHub 用户名）
+        message:
+          type: string
+          description: 提交信息（Commit Message）
+        timestamp:
+          type: string
+          format: date-time
+          description: 提交时间
+        repo:
+          type: string
+          description: 仓库名称（owner/repo）
+        additions:
+          type: integer
+          minimum: 0
+          description: |
+            新增行数。**必填**：GitHub 的 /commits 列表接口不返回该字段，
+            实现必须回查单条 commit 详情；确实取不到时须显式记录错误，
+            不得静默填 0。
+        deletions:
+          type: integer
+          minimum: 0
+          description: 删除行数。必填，约束同 additions。
+        files_changed:
+          type: integer
+          minimum: 0
+          description: 变更文件数。必填，约束同 additions。
+
+    TaskRecord:
+      type: object
+      description: 任务变更记录（书图 5-6）
+      required: [assignee, title, status_from, status_to, updated_at]
+      properties:
+        assignee:
+          type: string
+          description: 负责人（飞书用户名 / 邮箱）
+        title:
+          type: string
+          description: 任务标题
+        status_from:
+          type: string
+          description: 原状态
+        status_to:
+          type: string
+          description: 新状态
+        updated_at:
+          type: string
+          format: date-time
+          description: 变更时间
+
+    MessageRecord:
+      type: object
+      description: 消息记录（书图 5-6）
+      required: [sender, content, timestamp, chat_name]
+      properties:
+        sender:
+          type: string
+          description: 发送者（飞书用户名 / 邮箱）
+        content:
+          type: string
+          description: 消息内容（纯文本，富文本 post 须先拍平）
+        timestamp:
+          type: string
+          format: date-time
+          description: 发送时间
+        chat_name:
+          type: string
+          description: 群名称
+
+    AttendanceRecord:
+      type: object
+      description: 考勤记录（v1.1 新增，Task 11）
+      required: [employee_id, date, work_hours, status]
+      properties:
+        employee_id:
+          type: string
+          description: 飞书用户 ID
+        date:
+          type: string
+          format: date
+          description: 考勤日期
+        check_in:
+          type: string
+          format: date-time
+          nullable: true
+          description: 签到时间；缺失时为 null
+        check_out:
+          type: string
+          format: date-time
+          nullable: true
+          description: 签退时间；缺失时为 null
+        work_hours:
+          type: number
+          format: float
+          minimum: 0
+          description: 工时（小时）= check_out - check_in，保留一位小数；缺任一时刻则为 0
+        status:
+          type: string
+          enum: [正常, 迟到, 早退, 缺勤, 休假, 签退缺失]
+          description: 考勤状态；缺失签退数据时必须是"签退缺失"
+
+    # ---------- 聚合层模型 ----------
+    MemberReport:
+      type: object
+      required: [name, github_username]
+      properties:
+        name:
+          type: string
+          description: 成员姓名
+        github_username:
+          type: string
+          description: GitHub 用户名（身份映射用）
+        commits:
+          type: array
+          items: { $ref: "#/components/schemas/CommitRecord" }
+          default: []
+        tasks:
+          type: array
+          items: { $ref: "#/components/schemas/TaskRecord" }
+          default: []
+        messages:
+          type: array
+          items: { $ref: "#/components/schemas/MessageRecord" }
+          default: []
+        attendance:
+          allOf: [{ $ref: "#/components/schemas/AttendanceRecord" }]
+          nullable: true
+          description: 考勤记录（v1.1 新增）
+
+    DailyReport:
+      type: object
+      required: [date, team_name, members, generated_at, markdown, html]
+      properties:
+        date:
+          type: string
+          format: date
+        team_name:
+          type: string
+        members:
+          type: array
+          items: { $ref: "#/components/schemas/MemberReport" }
+        generated_at:
+          type: string
+          format: date-time
+        markdown:
+          type: string
+          description: 完整 Markdown 日报，必须包含三个核心板块标题
+        html:
+          type: string
+          description: 完整 HTML 日报，可直接作为邮件正文渲染
+
+    # ---------- 通用返回类型（ADR-003）----------
+    CollectResult:
+      type: object
+      description: |
+        采集层统一返回类型（ADR-003）。用于区分"当日确实无数据"与"采集失败"，
+        以满足 proposal.md §3.2"采集失败必须显式标注、严禁静默跳过"。
+      required: [success, records]
+      properties:
+        success:
+          type: boolean
+        records:
+          type: array
+          description: 采集到的记录；失败时为空数组
+          items: {}
+        error_message:
+          type: string
+          nullable: true
+          description: 失败原因；成功时为 null
+
+    # ---------- 配置 ----------
+    Member:
+      type: object
+      description: 成员身份映射表条目（书图 5-7），解决跨系统身份关联
+      required: [name, github, lark]
+      properties:
+        name: { type: string }
+        github: { type: string, description: 对应 CommitRecord.author }
+        lark:
+          type: string
+          description: 对应 TaskRecord.assignee / MessageRecord.sender / AttendanceRecord.employee_id
+
+    AppConfig:
+      type: object
+      required: [members, report]
+      properties:
+        members:
+          type: array
+          items: { $ref: "#/components/schemas/Member" }
+        github:
+          type: object
+          properties:
+            repos:
+              type: array
+              items: { type: string, pattern: "^[^/]+/[^/]+$" }
+            timeout: { type: number, default: 10 }
+            max_retries: { type: integer, default: 3 }
+            retry_interval: { type: number, default: 5 }
+        lark:
+          type: object
+          properties:
+            project_id: { type: string }
+            chat_id: { type: string }
+            keywords:
+              type: array
+              items: { type: string }
+            max_retries: { type: integer, default: 3 }
+        email:
+          type: object
+          properties:
+            smtp_host: { type: string }
+            smtp_port: { type: integer, default: 465 }
+            use_ssl: { type: boolean, default: true }
+            sender: { type: string }
+            recipients:
+              type: array
+              items: { type: string, format: email }
+        report:
+          type: object
+          properties:
+            team_name: { type: string }
+            sensitive_keywords:
+              type: array
+              items: { type: string }
+              description: 敏感词黑名单，命中即从日报中剔除（design.md §6.2）
+            holidays:
+              type: array
+              items: { type: string, format: date }
+              description: 法定节假日，命中则跳过日报生成（proposal.md §3.3）
+
+# =====================================================================
+# 模块级接口契约（design.md §4 的机器可读版本）
+# 采集层三个 collect() 的返回类型在 v1.1 统一为 CollectResult（ADR-003）。
+# =====================================================================
+x-module-contracts:
+
+  collector.github:
+    summary: 采集 GitHub 指定仓库在时间范围内的 Commit（含分页）
+    function: collect
+    parameters:
+      - { name: repos, type: array, items: { type: string }, required: true, description: 仓库列表 }
+      - { name: since, type: string, format: date-time, required: true, description: 起始时间 }
+      - { name: until, type: string, format: date-time, required: true, description: 结束时间 }
+    returns:
+      $ref: "#/components/schemas/CollectResult"
+      items: { $ref: "#/components/schemas/CommitRecord" }
+    behaviors:
+      - 分页：每页 30 条（GitHub API 默认值），翻页时保留 since/until 过滤条件
+      - 超时重试 3 次，间隔 5s
+      - 限流（HTTP 403/429）时读 X-RateLimit-Reset 等待后重试
+      - 单个仓库失败不阻断其他仓库（优雅降级）
+      - stats/files 需回查单条 commit 详情（列表接口不返回）
+
+  collector.lark_task:
+    summary: 采集飞书项目中发生状态变更的任务
+    function: collect
+    parameters:
+      - { name: project_id, type: string, required: true }
+      - { name: since, type: string, format: date-time, required: true }
+      - { name: until, type: string, format: date-time, required: true }
+    returns:
+      $ref: "#/components/schemas/CollectResult"
+      items: { $ref: "#/components/schemas/TaskRecord" }
+    behaviors:
+      - 飞书 Token 过期（错误码 99991663）时自动刷新后重试 1 次
+      - 超时重试 3 次，仍失败则读 error_message 标注"数据获取失败"
+
+  collector.lark_msg:
+    summary: 采集飞书群消息，按关键词过滤并剔除敏感内容
+    function: collect
+    parameters:
+      - { name: chat_id, type: string, required: true }
+      - { name: keywords, type: array, items: { type: string }, required: true }
+      - { name: since, type: string, format: date-time, required: true }
+      - { name: until, type: string, format: date-time, required: true }
+    returns:
+      $ref: "#/components/schemas/CollectResult"
+      items: { $ref: "#/components/schemas/MessageRecord" }
+    behaviors:
+      - 关键词过滤：任一关键词命中即保留；keywords 为空表示不过滤
+      - 敏感词过滤：命中 report.sensitive_keywords 即剔除，且不落日志内容
+      - 富文本（post）消息先拍平为纯文本再过滤
+
+  collector.lark_attendance:
+    summary: 采集飞书考勤数据（v1.1 / Task 11）
+    function: collect
+    parameters:
+      - { name: since, type: string, format: date, required: true }
+      - { name: until, type: string, format: date, required: true }
+      - { name: employee_type, type: string, required: false, default: employee_no,
+          description: "工号类型：employee_no 或 employee_id" }
+      - { name: user_ids, type: array, items: { type: string }, required: false,
+          description: "员工工号 / ID 列表" }
+    returns:
+      $ref: "#/components/schemas/CollectResult"
+      items: { $ref: "#/components/schemas/AttendanceRecord" }
+    upstream_request:
+      # 实测校准（2026-09）：飞书该接口的参数分两处承载，且日期是整数。
+      # 初版三处都写错，恒返回 99992402 field validation failed。
+      endpoint: "POST /attendance/v1/user_tasks/query"
+      query_params:
+        employee_type: { type: string, note: "必须走 query string，不能放请求体" }
+      body:
+        user_ids: { type: array }
+        check_date_from: { type: integer, note: "YYYYMMDD，如 20260424" }
+        check_date_to: { type: integer, note: "YYYYMMDD" }
+      calibration_evidence: "格式正确后返回业务级错误 1220001 employeeNos is empty，而非格式级 99992402"
+    behaviors:
+      - 工时 = check_out - check_in
+      - 缺失签退时 status 置为"签退缺失"，work_hours 为 0
+      - API 不可用时 success=false 并附 error_message
+      - "错误信息必须透传：飞书在 HTTP 400 时也返回结构化 code/msg，
+        不得只抛 HTTP 400 而丢掉 employeeNos is empty 这类可定位提示"
+
+  generator.generate:
+    summary: 把各成员数据组织为 Markdown + HTML 日报
+    function: generate
+    parameters:
+      - { name: members, type: array, items: { $ref: "#/components/schemas/MemberReport" }, required: true }
+      - { name: date, type: string, format: date, required: true }
+      - { name: team_name, type: string, required: true }
+      - name: sources
+        type: object
+        required: false
+        description: 各数据源采集是否成功；false 的源在日报中标注"数据获取失败"
+    returns: { $ref: "#/components/schemas/DailyReport" }
+    behaviors:
+      - 三段式编排：代码提交 → 任务进展 → 协作沟通
+      - 成员当日无记录时对应板块显示"今日无记录"
+      - members 为空时抛 GeneratorError，不产出空日报
+
+  notifier.email:
+    summary: 通过 SMTP 发送 HTML 日报
+    function: send
+    parameters:
+      - { name: report, $ref: "#/components/schemas/DailyReport", required: true }
+      - { name: recipients, type: array, items: { type: string }, required: true }
+    returns: { type: boolean, description: 成功 true / 失败 false（不抛异常） }
+    behaviors:
+      - 邮件主题包含日期与团队名称
+      - 正文为 text/html
+      - 失败重试 2 次，仍失败返回 false 并记录日志
+
+  notifier.lark_bot:
+    summary: 通过机器人把 Markdown 日报推送到飞书群
+    function: send
+    parameters:
+      - { name: report, $ref: "#/components/schemas/DailyReport", required: true }
+      - { name: chat_id, type: string, required: true }
+    returns: { type: boolean }
+    behaviors:
+      - 消息体为 Markdown 格式日报
+      - 失败重试 2 次，仍失败返回 false 并记录日志
+
+# =====================================================================
+# 契约校验规则：实现必须满足，CI 可据此检查
+# =====================================================================
+x-contract-rules:
+  - rule: 所有 required 字段必须有值，禁止用 0 / "" / null 静默兜底
+    rationale: 曾因 stats 字段缺失静默填 0，导致净增删行数恒为 0
+  - rule: 采集层失败必须通过 CollectResult.success=false + error_message 表达
+    rationale: proposal.md §3.2 要求显式标注，严禁静默跳过（ADR-003）
+  - rule: 推送层返回 bool 而不抛异常
+    rationale: design.md §6.1 关键原则 4 —— 推送渠道应互为备份告警通道
+  - rule: 模块只能依赖相邻模块的契约
+    rationale: Parnas 信息隐藏原则；采集层不需感知推送层存在

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "brownfield-demo"
+version = "1.0.0"
+description = "为存量系统补写规范的四步法演示 — 《SDD 实战：规范驱动开发之道》第 7.4 节复现"
+requires-python = ">=3.11"
+# 零第三方依赖：逆向工程分析器只用标准库 ast，
+# 刻意不引入依赖 —— 工具要能对任意存量仓库跑起来，不该要求先装一堆包。
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["tools", "legacy", "legacy_fixed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

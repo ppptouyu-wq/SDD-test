@@ -1,0 +1,77 @@
+name: workspace-ci
+
+# 工作区级 CI：三个项目各自独立，逐个启动 pytest 进程。
+# 为什么不用一条 pytest 命令跑全部：三个项目都有名为 `tests` 的测试包，
+# 且都含同名测试文件，在仓库根统一收集会模块名冲突。
+# 用矩阵策略分别运行，既有独立的结果反馈，又能在同一个 CI 里看全局。
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project:
+          - sdd-daily-report
+          - kb-search
+          - brownfield-demo
+    name: test / ${{ matrix.project }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖
+        working-directory: ${{ matrix.project }}
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+          if [ -f pyproject.toml ]; then
+            python -m pip install -e ".[dev]" 2>/dev/null || python -m pip install -e . 2>/dev/null || true
+          fi
+
+      - name: 运行测试
+        working-directory: ${{ matrix.project }}
+        run: python -m pytest -q
+
+  spec-governance:
+    runs-on: ubuntu-latest
+    name: 规范治理检查
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖
+        working-directory: sdd-daily-report
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest httpx PyYAML Jinja2
+
+      - name: 多工具规范配置同步检查
+        working-directory: sdd-daily-report
+        run: python scripts/generate_tool_configs.py --check
+
+      - name: 规范审查（生成—评审模式）
+        working-directory: sdd-daily-report
+        run: python -m sdd_agents review
+
+      - name: 治理检查（ADR 只追加 / 模板底线 / 同步提交）
+        working-directory: sdd-daily-report
+        run: python -m sdd_agents team
+
+      - name: 规范兑现度度量
+        working-directory: sdd-daily-report
+        run: python -m sdd_agents metrics
+
+      - name: Dockerfile 镜像布局校验
+        working-directory: sdd-daily-report
+        run: python scripts/verify_dockerfile.py

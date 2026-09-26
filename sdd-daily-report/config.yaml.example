@@ -1,0 +1,65 @@
+# ---- GitHub ----
+github:
+  repos:
+    - "acme/daily-report"
+    - "acme/shared-lib"
+  api_base: "https://api.github.com"
+  timeout: 10
+  max_retries: 3
+  retry_interval: 5
+
+# ---- 飞书开放平台 ----
+lark:
+  project_id: "proj_demo_001"
+  chat_id: "oc_demo_chat_001"
+  keywords:
+    - "项目"
+    - "需求"
+    - "bug"
+    - "发布"
+  api_base: "https://open.feishu.cn/open-apis"
+  timeout: 10
+  max_retries: 3
+
+# ---- 邮件（SMTP）----
+email:
+  smtp_host: "smtp.example.com"
+  smtp_port: 465
+  smtp_user: "daily-report@example.com"
+  use_ssl: true
+  sender: "daily-report@example.com"
+  recipients:
+    - "leader@example.com"
+
+# ---- 日报 ----
+report:
+  team_name: "平台研发组"
+  timezone: "Asia/Shanghai"
+  sensitive_keywords:
+    - "薪资"
+    - "绩效"
+    - "裁员"
+    - "期权"
+  holidays:
+    - "2026-10-01"
+    - "2026-10-02"
+
+storage_path: "data/reports.db"
+
+# ---- 成员身份映射表（书图 5-7）----
+members:
+  - name: "张三"
+    github: "zhangsan"
+    lark: "zhangsan@company.com"
+  - name: "李四"
+    github: "lisi-dev"
+    lark: "lisi@company.com"
+  - name: "王五"
+    github: "wangwu"
+    lark: "wangwu@company.com"
+
+# ---- 凭据通过环境变量注入（design.md §6.2 安全约束）----
+# export GITHUB_TOKEN=...
+# export LARK_APP_ID=...
+# export LARK_APP_SECRET=...
+# export SMTP_PASSWORD=...

@@ -1,0 +1,41 @@
+# ---- 密钥（design.md §6.2：严禁提交 .env）----
+.env
+*.env
+!.env.example
+
+# ---- 本地配置与数据 ----
+# 注意：仓库只分发 *.example 模板；真实配置含环境相关信息（群 ID、收件人、
+# 路径、令牌来源等），不应上传。这里用通配覆盖 config.yaml、config.github.yaml、
+# 以及将来可能新增的 config.<env>.yaml。
+config.yaml
+config.*.yaml
+!.example/config.yaml.example
+data/
+*.db
+*.sqlite3
+# 本地一次性的演示数据（含真实 ID），只分发 .example
+tasks.sample.json
+tasks.*.json
+!tasks.sample.json.example
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.pytest_cache/
+test_tmp/
+.pytest_tmp/
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# ---- 用户身份 token（design.md §6.2：严禁提交凭据）----
+# 用户身份授权后落盘的 access_token / refresh_token
+data/lark_user_token.json
+lark_user_token.json
+
+# ---- 编辑器 ----
+.idea/
+.DS_Store
+# 注意：.vscode/ 刻意不忽略 —— launch.json 是给使用者的运行配置，需要随仓库分发

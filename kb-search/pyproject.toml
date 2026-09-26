@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kb-search"
+version = "1.0.0"
+description = "知识库语义搜索工具 — 《SDD 实战：规范驱动开发之道》第 1-2 章案例项目复现"
+requires-python = ">=3.11"
+# 核心依赖：只有 HTTP 客户端。领域逻辑本身零第三方依赖。
+dependencies = [
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+# HTTP 服务层：只有需要跑 uvicorn 时才装
+service = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+]
+# 真实向量库（ADR-001）
+qdrant = [
+    "qdrant-client>=1.9",
+]
+dev = [
+    "pytest>=7.4",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["kb_search"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

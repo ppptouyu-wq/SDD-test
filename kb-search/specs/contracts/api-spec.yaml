@@ -1,0 +1,316 @@
+openapi: 3.0.3
+
+info:
+  title: 知识库语义搜索工具 — 接口契约（api-spec.yaml）
+  version: 1.0.0
+  description: |
+    本书 SDD 六阶段工作流【阶段三：接口契约】的产物（与 data-models.md 配套）。
+
+    与主项目 `sdd-daily-report` 的 api-spec.yaml 同构：
+      - `components.schemas`      模块间流动的数据结构（类型与必填性）
+      - `x-module-contracts`      每个模块对外暴露的函数签名
+      - `x-contract-rules`        实现必须满足、CI 可据此检查的规则
+
+    存在意义同主项目：把"只写在文档里的约定"变成"可被工具校验的契约"。
+    本项目实现期真实发生过一次因契约不明确导致的缺陷 —— 中文单字与二元组同权时
+    无关查询得到 0.11 的相似度（假阳性），最终通过明确"单字降权"的规则修复，
+    该规则已写入下方 `LocalHashEmbedding` 的行为约定。
+
+paths:
+  /search:
+    post:
+      operationId: search
+      summary: 语义检索
+      description: |
+        接收自然语言查询，返回语义相关的文档片段。
+        查询为空或全空白返回 400；top_k 超过上限按上限截断（不报错）。
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SearchRequest" }
+      responses:
+        "200":
+          description: 检索成功（无命中时返回空列表）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SearchResponse" }
+        "400":
+          description: query 为空、全空白或超过长度上限
+        "503":
+          description: 向量库或 Embedding 服务不可用
+
+  /ingest:
+    post:
+      operationId: ingest
+      summary: 触发一次文档同步（增量）
+      description: |
+        从飞书拉取文档 → 切分 → 向量化 → 写入向量库。
+        单篇文档失败不阻断其余文档，失败文档记入 failed_doc_ids。
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IngestRequest" }
+      responses:
+        "200":
+          description: 同步完成（可能含部分失败）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IngestReport" }
+        "503":
+          description: 飞书、Embedding 或向量库不可用
+
+  /healthz:
+    get:
+      operationId: healthz
+      summary: 健康检查
+      responses:
+        "200":
+          description: 服务健康
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthResponse" }
+        "503":
+          description: 向量库不可达
+
+components:
+  schemas:
+
+    Document:
+      type: object
+      description: 飞书文档
+      required: [doc_id, title, url, content, updated_at]
+      properties:
+        doc_id: { type: string }
+        title: { type: string }
+        url: { type: string, description: 原文链接 }
+        content: { type: string, description: 正文纯文本 }
+        updated_at: { type: string, format: date-time }
+
+    Chunk:
+      type: object
+      description: 文档切分后的最小检索单元
+      required: [chunk_id, doc_id, title, url, text, position]
+      properties:
+        chunk_id:
+          type: string
+          description: 形如 `<doc_id>#<序号>`
+        doc_id: { type: string }
+        title: { type: string }
+        url: { type: string }
+        text: { type: string }
+        position: { type: integer, minimum: 0, description: 在文档中的序号，从 0 开始 }
+
+    SearchHit:
+      type: object
+      required: [chunk_id, doc_id, title, url, text, score]
+      properties:
+        chunk_id: { type: string }
+        doc_id: { type: string }
+        title: { type: string }
+        url: { type: string }
+        text: { type: string }
+        score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: 余弦相似度，0~1
+
+    SearchRequest:
+      type: object
+      properties:
+        query:
+          type: string
+          maxLength: 2000
+          description: 自然语言查询；为空或全空白返回 400
+        top_k:
+          type: integer
+          default: 5
+          description: 返回条数上限；> 100 按 100 截断，< 1 按 1 处理
+
+    SearchResponse:
+      type: object
+      required: [hits, count]
+      properties:
+        hits:
+          type: array
+          items: { $ref: "#/components/schemas/SearchHit" }
+        count: { type: integer, minimum: 0 }
+
+    IngestRequest:
+      type: object
+      properties:
+        doc_ids:
+          type: array
+          nullable: true
+          items: { type: string }
+          description: 指定要同步的文档；为空表示同步全部
+
+    IngestItemResult:
+      type: object
+      required: [doc_id, ok]
+      properties:
+        doc_id: { type: string }
+        ok: { type: boolean }
+        chunks: { type: integer, minimum: 0 }
+        skipped:
+          type: boolean
+          description: 内容未变更而跳过（增量同步）
+        error:
+          type: string
+          nullable: true
+          description: 失败原因；成功时为 null
+
+    IngestReport:
+      type: object
+      required: [total, succeeded, failed, skipped, chunks_written, items]
+      properties:
+        total: { type: integer }
+        succeeded: { type: integer }
+        failed: { type: integer }
+        skipped: { type: integer }
+        chunks_written: { type: integer }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/IngestItemResult" }
+        failed_doc_ids:
+          type: array
+          items: { type: string }
+          description: 失败文档的 ID 列表，便于调用方定位
+
+    HealthResponse:
+      type: object
+      required: [status, chunks]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        chunks:
+          type: integer
+          nullable: true
+          description: 已入库片段数；未注入 store 时为 null
+
+# =====================================================================
+# 模块级接口契约（design.md §4 的机器可读版本）
+# =====================================================================
+x-module-contracts:
+
+  sources.FeishuDocSource:
+    summary: 飞书文档源
+    functions:
+      - name: list_documents
+        parameters: []
+        returns: { type: array, items: { type: string } }
+        behaviors:
+          - 未配置凭据时抛 SourceError，**不返回空列表**（避免同步"假成功"）
+      - name: fetch
+        parameters:
+          - { name: doc_id, type: string, required: true }
+        returns: { $ref: "#/components/schemas/Document" }
+        behaviors:
+          - 任何底层错误转 SourceError 时必须带上 doc_id（design.md §6.1 要求可定位）
+          - Token 过期（错误码 99991663）时自动刷新后重试 1 次
+
+  embeddings.EmbeddingModel:
+    summary: 文本向量化
+    functions:
+      - name: encode
+        parameters:
+          - { name: texts, type: array, items: { type: string }, required: true }
+        returns: { type: array, items: { type: array, items: { type: number, format: float } } }
+        behaviors:
+          - 输出维度固定 1536（ADR-002）
+          - 向量必须 L2 归一化
+          - "确定性：相同输入必须得到完全相同的输出"
+          - 无特征文本返回全零向量，而不是抛异常
+      - name: dimension
+        returns: { type: integer, const: 1536 }
+
+  vectorstore.VectorStore:
+    summary: 向量写入与近邻检索
+    functions:
+      - name: upsert
+        parameters:
+          - { name: chunks, type: array, items: { $ref: "#/components/schemas/Chunk" }, required: true }
+          - { name: vectors, type: array, required: true }
+        returns: { type: integer, description: 写入的片段数 }
+        behaviors:
+          - 同一 doc_id 重新写入前必须先清除其旧片段，避免重复召回
+          - chunks 与 vectors 长度不一致时抛 VectorStoreError
+      - name: search
+        parameters:
+          - { name: query_vector, type: array, required: true }
+          - { name: top_k, type: integer, required: true }
+        returns: { type: array, items: { $ref: "#/components/schemas/SearchHit" } }
+        behaviors:
+          - 按余弦相似度降序；同分按 doc_id + position 稳定排序（结果可复现）
+          - 库为空时返回空列表，不抛异常
+          - 只返回 score > 0 的结果
+      - name: count
+        returns: { type: integer }
+      - name: get_content_hash
+        parameters:
+          - { name: doc_id, type: string, required: true }
+        returns: { type: string, nullable: true }
+        behaviors:
+          - 返回 null 表示该文档从未同步过（区别于"同步过但内容为空"）
+
+  service.SearchService:
+    summary: 检索编排
+    functions:
+      - name: search
+        parameters:
+          - { name: query, type: string, required: true }
+          - { name: top_k, type: integer, required: false, default: 5 }
+        returns: { type: array, items: { $ref: "#/components/schemas/SearchHit" } }
+        behaviors:
+          - query 为空/全空白时抛 ValidationError（→ HTTP 400）
+          - top_k 越界截断（>100 取 100，<1 取 1）
+          - 向量库为空时**直接返回空列表，不消耗 Embedding 调用**
+
+  service.IngestService:
+    summary: 同步编排
+    functions:
+      - name: sync
+        parameters:
+          - { name: doc_ids, type: array, nullable: true }
+        returns: { $ref: "#/components/schemas/IngestReport" }
+        behaviors:
+          - 单篇文档失败不阻断其余文档（优雅降级）
+          - 内容哈希未变则跳过（增量同步）
+          - 正文为空时不写空片段，但计为处理成功
+          - Embedding 失败记为该文档失败，不让整批崩掉
+
+  handlers:
+    summary: HTTP 处理逻辑（不依赖 Web 框架）
+    functions:
+      - name: handle_search
+        returns: { type: object, description: HandlerResult(status_code, body) }
+        behaviors:
+          - Query 校验失败 → 400；向量库不可用 → 503
+      - name: handle_ingest
+        behaviors:
+          - 依赖不可用 → 503
+      - name: handle_healthz
+        behaviors:
+          - 向量库不可达 → 503 且 status=degraded
+
+# =====================================================================
+# 契约校验规则：实现必须满足，CI 可据此检查
+# =====================================================================
+x-contract-rules:
+  - rule: 空输入必须被显式区分于"无结果"
+    rationale: query 为空返回 400，而向量库为空返回 200 + 空列表，两者语义不同
+  - rule: 外部依赖失败必须抛出带原因的领域异常，禁止静默返回空
+    rationale: 静默返回空会让同步任务"成功但什么都没做"，无法定位问题
+  - rule: 单条数据失败不得影响同批其他数据
+    rationale: design.md §6.1 优雅降级；且 IngestReport 必须能定位失败 doc_id
+  - rule: 检索结果必须可复现
+    rationale: 向量库与本地实现都要稳定排序，否则测试无法断言、问题无法复现
+  - rule: 中文特征必须以二元组为主、单字降权
+    rationale: |
+      实现期真实缺陷：单字与二元组同权时，无关查询"员工报销标准"得到 0.11 的
+      相似度（假阳性）。单字降权到 0.15 后降到 0.006，相关查询仍有 0.21。
+      该规则写入契约以防回归。

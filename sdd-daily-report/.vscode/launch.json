@@ -1,0 +1,68 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "① 演练：mock 数据（无需凭据）",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["--config", "config.yaml", "--date", "2026-08-20", "--mock"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false
+    },
+    {
+      "name": "② 真实 GitHub 仓库（2026-04-24，不推送）",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["--config", "config.github.yaml", "--date", "2026-04-24", "--no-push"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "justMyCode": false
+    },
+    {
+      "name": "③ 健康检查（--check）",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["--config", "config.github.yaml", "--check"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "justMyCode": false
+    },
+    {
+      "name": "④ 今天（真实推送，慎用）",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["--config", "config.github.yaml", "--push"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "justMyCode": false
+    },
+    {
+      "name": "⑤ 跑全部测试（pytest）",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["-v"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false
+    },
+    {
+      "name": "⑥ 只跑当前打开的测试文件",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["-v", "${file}"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false
+    }
+  ]
+}

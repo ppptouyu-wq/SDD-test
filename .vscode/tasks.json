@@ -1,0 +1,41 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "准备 config.yaml（若缺失则从 .example 复制）",
+      "type": "shell",
+      "command": "if (-not (Test-Path 'config.yaml')) { Copy-Item 'config.yaml.example' 'config.yaml' }; if (-not (Test-Path 'config.github.yaml')) { Copy-Item 'config.github.yaml.example' 'config.github.yaml' }; if (-not (Test-Path 'tasks.sample.json')) { Copy-Item 'tasks.sample.json.example' 'tasks.sample.json' }",
+      "options": {
+        "cwd": "${workspaceFolder}/sdd-daily-report",
+        "shell": {
+          "executable": "powershell",
+          "args": ["-NoProfile", "-Command"]
+        }
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated",
+        "close": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "准备 config.email.yaml（用于真实发信演练，收件人需自己填）",
+      "type": "shell",
+      "command": "if ((Test-Path 'config.yaml') -and -not (Test-Path 'config.email.yaml')) { Copy-Item 'config.yaml' 'config.email.yaml' }",
+      "options": {
+        "cwd": "${workspaceFolder}/sdd-daily-report",
+        "shell": {
+          "executable": "powershell",
+          "args": ["-NoProfile", "-Command"]
+        }
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated",
+        "close": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}

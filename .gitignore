@@ -1,0 +1,36 @@
+# ---- 密钥 ----
+.env
+*.env
+!.env.example
+
+# ---- 本地配置与数据（各子项目内部另有自己的 .gitignore）----
+config.yaml
+config.*.yaml
+!config.*.yaml.example
+data/
+*.db
+*.sqlite3
+tasks.*.json
+!tasks.*.json.example
+lark_user_token.json
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.pytest_cache/
+test_tmp/
+.pytest_tmp/
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# ---- 编辑器 ----
+.idea/
+.DS_Store
+
+# ---- 版权扫描件：绝不提交 ----
+扫描全能王*.pdf
+pages/
+pages_opt/

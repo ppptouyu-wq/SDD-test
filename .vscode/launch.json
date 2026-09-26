@@ -1,0 +1,53 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "① 演练：mock 数据（无需凭据）",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/sdd-daily-report/main.py",
+      "cwd": "${workspaceFolder}/sdd-daily-report",
+      "console": "integratedTerminal",
+      "preLaunchTask": "准备 config.yaml（若缺失则从 .example 复制）",
+      "args": ["--config", "config.yaml", "--date", "2026-08-20", "--mock"]
+    },
+    {
+      "name": "② 真实 GitHub 仓库（2026-04-24，不推送）",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/sdd-daily-report/main.py",
+      "cwd": "${workspaceFolder}/sdd-daily-report",
+      "console": "integratedTerminal",
+      "preLaunchTask": "准备 config.yaml（若缺失则从 .example 复制）",
+      "args": ["--config", "config.github.yaml", "--date", "2026-04-24", "--no-push"]
+    },
+    {
+      "name": "③ 健康检查（--check）",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/sdd-daily-report/main.py",
+      "cwd": "${workspaceFolder}/sdd-daily-report",
+      "console": "integratedTerminal",
+      "preLaunchTask": "准备 config.yaml（若缺失则从 .example 复制）",
+      "args": ["--config", "config.yaml", "--check"]
+    },
+    {
+      "name": "④ 跑全部测试（三个项目）",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/run_all_tests.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "⑤ 真实发邮件（mock 数据，会真的发信）",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/sdd-daily-report/main.py",
+      "cwd": "${workspaceFolder}/sdd-daily-report",
+      "console": "integratedTerminal",
+      "preLaunchTask": "准备 config.email.yaml（用于真实发信演练，收件人需自己填）",
+      "args": ["--config", "config.email.yaml", "--date", "2026-08-20", "--mock", "--push"]
+    }
+  ]
+}

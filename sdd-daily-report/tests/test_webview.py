@@ -398,6 +398,74 @@ def test_member_carries_the_four_fixed_sections(ro):
     assert member.attendance.work_hours == 8.5
 
 
+def test_time_fields_reach_the_page_as_full_iso_strings(ro):
+    """时间字段一律以完整 ISO 字符串交给页面（data-models.md §3 的约定）。
+
+    回归测试：v1.2 首版的 ``clockOf()`` 以为拿到的是 ``"09:02"``，于是把
+    ``2026-09-30T09:02:00`` 原样吐到页面上（实测截图发现签到/签退两列显示成
+    带 ``T`` 和时区偏移的长串）。契约这一侧此前完全没断言，所以测试没拦住它 ——
+    现在把"视图层不截断、由页面渲染时格式化"这条约定钉住。
+    """
+    detail = views.get_report(ro, date(2026, 9, 30))
+    assert detail is not None
+
+    member = detail.members[0]
+    assert member.attendance is not None
+    assert member.attendance.check_in == "2026-09-30T09:02:00"
+    assert member.attendance.check_out == "2026-09-30T18:31:00"
+    # 同一条日报里其它时间字段同样是 ISO，页面按同一套方式格式化。
+    assert member.commits[0].timestamp == "2026-09-30T10:00:00"
+    assert member.tasks[0].updated_at == "2026-09-30T18:00:00"
+
+
+def test_static_page_extracts_the_clock_from_an_iso_timestamp():
+    """页面的 ``clockOf()`` 必须能从 ISO 时间串里取出 ``HH:MM``。
+
+    JS 无法在 pytest 里执行，所以这里对静态页做源码级断言：函数体里既要保留
+    ``HH:MM`` 直通分支，也要有从 ISO 中截取时钟的分支。断言的是**行为特征**
+    （一个正则 + 一个 match 调用），不是某一行原文，改动格式不会误伤。
+    """
+    html = _static("index.html")
+    match = re.search(r"function\s+clockOf\s*\(value\)\s*\{(.*?)\n  \}", html, re.DOTALL)
+    assert match is not None, "index.html 里找不到 clockOf()"
+
+    body = match.group(1)
+    assert r"/^\d{2}:\d{2}$/" in body, "clockOf 丢了 HH:MM 直通分支"
+    assert re.search(r"\.match\(\s*/\[T \]\(\\d\{2\}:\\d\{2\}\)/\s*\)", body) is not None, (
+        "clockOf 缺少从 ISO 时间串（含 'T' 或空格分隔符）截取 HH:MM 的分支，"
+        "会把 2026-09-30T09:02:00 原样显示出来"
+    )
+
+
+def test_static_page_does_not_steal_focus_on_first_paint():
+    """首次渲染不得移动焦点。
+
+    回归测试：v1.2 首版在 ``renderRoute()`` 首次执行时就 ``focus()`` 了标题，
+    ``:focus-visible`` 于是在 ``h1`` 上画了一圈品牌红焦点环（design.md §6.5(4)
+    把 ``--accent`` 定义成"标题重音 + 焦点环"）。本页配色里红色只代表错误，
+    打开页面就看到一个红框会被误读成报错。
+    """
+    html = _static("index.html")
+    assert "viewRenderedOnce" in html, "缺少首帧守卫变量"
+    body = re.search(r"function\s+setFocus\s*\(activeView\)\s*\{(.*?)\n  \}", html, re.DOTALL)
+    assert body is not None, "index.html 里找不到 setFocus()"
+    assert "if (!viewRenderedOnce) return;" in body.group(1), (
+        "setFocus() 没有首帧守卫 —— 页面刚打开就会在标题上画出焦点环"
+    )
+
+
+def test_detail_view_heading_id_matches_its_aria_labelledby():
+    """``<section id="view-detail" aria-labelledby="h-detail">`` 引用的 id 必须真实存在。
+
+    v1.2 首版的详情标题没有 id，``aria-labelledby`` 悬空 —— 该视图没有无障碍名称，
+    而且 ``setFocus()`` 也找不到焦点目标。
+    """
+    html = _static("index.html")
+    assert 'aria-labelledby="h-detail"' in html
+    assert 'title.id = "h-detail"' in html, "详情标题没有设置 id=\"h-detail\""
+    assert 'title.setAttribute("data-focus", "")' in html, "详情标题不是焦点目标"
+
+
 def test_missing_attendance_is_none_not_an_empty_record(ro):
     """考勤缺失 → None，语义是"考勤数据暂不可用"，与"今日无记录"是两个维度。"""
     detail = views.get_report(ro, date(2026, 9, 29))

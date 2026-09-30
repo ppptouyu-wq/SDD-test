@@ -110,6 +110,17 @@
 `attendance` 为 `AttendanceView | None`，`None` 在页面上的语义是**"考勤数据暂不可用"**，
 而不是"该成员今天没有考勤"。
 
+> **时间字段的线上格式**（v1.2 补充约定）：`AttendanceView.check_in` / `check_out`、
+> `CommitView.timestamp`、`TaskView.updated_at`、`MessageView.timestamp`、
+> `ReportListItem.generated_at` 一律是**完整 ISO 8601 字符串**
+> （如 `2026-09-30T09:02:00`）。**视图层不做截断**，由页面在渲染时取 `HH:MM`
+> 或 `YYYY-MM-DD HH:MM`。
+>
+> 这条约定是补写的：v1.2 首版没有写明，页面的考勤格按 `"09:02"` 这种短格式解析，
+> 而视图层按上面的约定发的是完整 ISO，结果签到/签退两列把
+> `2026-09-30T09:02:00` 原样显示了出来。同一条日报里 `CommitView.timestamp`
+> 等字段一直是完整 ISO（页面用 `value.slice(11, 16)` 的方式格式化），考勤是唯一的例外。
+
 ### ReportDetail（日报详情）
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|

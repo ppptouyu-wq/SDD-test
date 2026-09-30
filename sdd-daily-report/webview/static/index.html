@@ -170,8 +170,12 @@
 
   function clockOf(value) {
     if (typeof value !== "string" || value.length < 5) return TEXT.dash;
+    // 后端（shared.storage -> AttendanceRecord）序列化出来的是完整 ISO 时间
+    // （2026-04-24T09:32:00+08:00），这里只取时钟部分；已经是 "09:32" 的原样返回。
     var head = value.slice(0, 5);
-    return /^\d{2}:\d{2}$/.test(head) ? head : value;
+    if (/^\d{2}:\d{2}$/.test(head)) return head;
+    var matched = value.match(/[T ](\d{2}:\d{2})/);
+    return matched ? matched[1] : value;
   }
 
   function fileCount(value) {
@@ -451,7 +455,13 @@
     var overview = el("div", "overview");
     var top = el("div", "ov-top");
     var head = el("div", null);
-    head.appendChild(el("h1", "ov-title num", dateOf(item.date) + " · " + clearText(item.team_name)));
+    // id 必须叫 h-detail：<section id="view-detail" aria-labelledby="h-detail"> 引用了它，
+    // 否则该视图没有无障碍名称；data-focus 让路由切换后焦点落到详情标题上。
+    var title = el("h1", "ov-title num", dateOf(item.date) + " · " + clearText(item.team_name));
+    title.id = "h-detail";
+    title.tabIndex = -1;
+    title.setAttribute("data-focus", "");
+    head.appendChild(title);
     head.appendChild(el("p", "ov-meta num", memberMeta(item)));
     top.appendChild(head);
     top.appendChild(badgeNode(item.status));
@@ -510,6 +520,7 @@
   var viewDetail = document.getElementById("view-detail");
   var REPORT_PREFIX = "#/report/";
   var loadedKey = null;
+  var viewRenderedOnce = false;
 
   function currentDate() {
     var hash = location.hash || "";
@@ -519,7 +530,12 @@
     return raw.length > 0 ? raw : null;
   }
 
+  /* 路由切换后把焦点移到该视图的标题（屏幕阅读器需要知道内容换了）。
+     首次渲染必须跳过：页面刚打开时用户并没有"切换视图"这个动作，此时抢焦点会让
+     :focus-visible 在标题上画一圈品牌红焦点环（design.md §6.5(4) 把 --accent 定义为
+     "标题重音 + 焦点环"），而本页配色里红色只代表错误，看起来像报错框。 */
   function setFocus(activeView) {
+    if (!viewRenderedOnce) return;
     var target = activeView.querySelector("[data-focus]");
     if (target && target.focus) target.focus({ preventScroll: true });
   }
@@ -541,6 +557,7 @@
     var pending = wantDetail ? loadDetail(day) : loadList();
     pending.then(function () {
       setFocus(wantDetail ? viewDetail : viewList);
+      viewRenderedOnce = true;
       window.scrollTo(0, 0);
     });
   }

@@ -7,6 +7,7 @@
 - `main.main()` 命令行入口的退出码
 - `main.load_dotenv()` 凭据注入（让 `.env.example` 的承诺真正生效）
 - `main.load_tasks_file()` 手动任务数据通道（飞书 API 读不到任务时的兜底）
+- 路径锚定：默认配置 / 默认库路径 / 相对 `storage_path` 不随进程 cwd 漂移
 
 端到端全链路（采集→聚合→生成→推送）的联调测试见 `tests/test_integration.py`。
 """
@@ -15,10 +16,12 @@ from __future__ import annotations
 
 import json
 from datetime import date, timedelta
+from pathlib import Path
 
 import pytest
 
 import main as app
+from shared.config import load_config
 from shared.storage import ReportStorage
 
 DAY = date(2026, 8, 20)  # 周四
@@ -216,3 +219,61 @@ def test_load_tasks_file_missing_file_raises(tmp_dir):
     with pytest.raises(app.DailyReportError) as excinfo:
         app.load_tasks_file(str(tmp_dir / "nope.json"), DAY)
     assert "不存在" in str(excinfo.value)
+
+
+# ============================================ 路径锚定（合并成单仓库后的回归）
+
+
+def test_project_paths_are_anchored_at_the_project_root_not_cwd():
+    """默认配置与默认库路径必须锚在**项目根**，而不是进程的 cwd。
+
+    回归测试：三个项目合并成 `sdd-reproduction/` 单仓库后，本项目嵌在
+    `sdd-reproduction/sdd-daily-report/` 里。从仓库根执行
+    `python sdd-daily-report/main.py`（在 VS Code 里点编辑器右上角的运行按钮就是
+    这种调用方式，此时 cwd 是工作区根）时，cwd 相对路径会找不到 config.yaml，
+    实测报：`加载配置失败：[config] 配置文件不存在：config.yaml`。
+    """
+    project_root = Path(__file__).resolve().parent.parent
+
+    assert Path(app.PROJECT_ROOT) == project_root
+    assert Path(app.DEFAULT_CONFIG).is_absolute()
+    assert Path(app.DEFAULT_CONFIG) == project_root / "config.yaml"
+    assert Path(app.DEFAULT_STORAGE).is_absolute()
+    assert Path(app.DEFAULT_STORAGE) == project_root / "data" / "reports.db"
+
+
+def test_relative_storage_path_resolves_against_the_config_file(tmp_dir, monkeypatch):
+    """配置里的相对 `storage_path` 相对**配置文件所在目录**解析，不随 cwd 漂移。
+
+    回归测试：三个配置文件写的都是 `storage_path: "data/reports.db"`。如果按 cwd
+    解析，从仓库根运行时日报库会被建到 `sdd-reproduction/data/reports.db`
+    （项目外面），而不是项目自己的 `data/` 下 —— 展示页与 `--check` 会读不到刚写的库。
+    """
+    project = tmp_dir / "proj"
+    project.mkdir()
+    config_path = project / "config.yaml"
+    config_path.write_text(
+        """
+lark:
+  project_id: "proj_1"
+  chat_id: "oc_1"
+storage_path: "data/reports.db"
+members:
+  - name: "张三"
+    github: "zhangsan"
+    lark: "zhangsan@company.com"
+""",
+        encoding="utf-8",
+    )
+
+    elsewhere = tmp_dir / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)  # 故意在一个与项目毫不相干的目录下加载配置
+
+    config = load_config(config_path)
+
+    resolved = Path(config.storage_path)
+    assert resolved.is_absolute(), "相对 storage_path 必须被解析成绝对路径"
+    assert resolved == project / "data" / "reports.db"
+    assert not str(resolved).startswith(str(elsewhere))
+

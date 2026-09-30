@@ -100,7 +100,9 @@ python -m pytest
 python main.py --config config.yaml --check
 ```
 
-> ⚠️ 必须在 `sdd-daily-report` 目录下执行，否则 `import shared` 会失败。
+> ⚠️ `main.py` 从任意目录都可以执行（默认配置与相对 `storage_path` 都锚在项目根，
+> 见 `tests/test_main.py::test_project_paths_are_anchored_at_the_project_root_not_cwd`）；
+> 但 `python -m pytest` 要在 `sdd-daily-report` 目录下执行，否则 `import shared` 会失败。
 
 ### 方式三：PyCharm
 
@@ -185,7 +187,7 @@ python check_email.py
 
 | 现象 | 原因 |
 |---|---|
-| `ModuleNotFoundError: No module named 'shared'` | 没在 `sdd-daily-report` 目录下运行 |
+| `ModuleNotFoundError: No module named 'shared'` | `python -m pytest` 没在本目录下运行。直接跑 `main.py` 已不受工作目录影响（入口路径锚在项目根），但三个子项目有同名顶层包，pytest 仍要在各自目录里跑 |
 | `…是非工作日，跳过日报生成` | 日期落在周末或配置的节假日，属预期行为（proposal.md §3.3） |
 | 运行成功但 0 条记录 | 该日期的采集窗口内确实没有提交，换 `--date` |
 | 飞书报"凭据缺失" | 正常：未配 `LARK_APP_ID/SECRET`，日报会标注"数据获取失败"，其余数据源照常 |

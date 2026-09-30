@@ -166,8 +166,8 @@ def load_config(path: str | Path) -> AppConfig:
         timeout=float(raw_lark.get("timeout", 10.0)),
         receive_id_type=str(raw_lark.get("receive_id_type", "chat_id")),
         auth_mode=str(raw_lark.get("auth_mode", "app")),
-        user_token_file=str(
-            raw_lark.get("user_token_file", "data/lark_user_token.json")
+        user_token_file=_resolve_relative_path(
+            raw_lark.get("user_token_file", "data/lark_user_token.json"), config_path
         ),
         max_retries=int(raw_lark.get("max_retries", 3)),
     )
@@ -199,5 +199,26 @@ def load_config(path: str | Path) -> AppConfig:
         lark=lark,
         email=email,
         report=report,
-        storage_path=str(raw.get("storage_path", "data/reports.db")),
+        storage_path=_resolve_relative_path(
+            raw.get("storage_path", "data/reports.db"), config_path
+        ),
     )
+
+
+def _resolve_relative_path(value: Any, config_path: Path) -> str:
+    """把配置里的相对路径解析成相对**配置文件所在目录**的绝对路径。
+
+    示例配置里写的是 ``storage_path: data/reports.db``、
+    ``user_token_file: data/lark_user_token.json`` 这样的相对路径。它们必须相对
+    配置文件本身解析，而不是相对进程的当前工作目录 —— 否则"从别处调用"就会把日报库
+    或令牌文件写到调用者的 cwd 下：本项目合并成单仓库后，项目嵌在
+    ``sdd-reproduction/sdd-daily-report/``，从仓库根执行
+    ``python sdd-daily-report/main.py`` 是很自然的动作（VS Code 按 F5 或点运行按钮时
+    cwd 就是工作区根目录），而那会把库写到 ``sdd-reproduction/data/reports.db``。
+
+    绝对路径原样返回，不使用相对语义。
+    """
+    path = Path(str(value))
+    if path.is_absolute():
+        return str(path)
+    return str((config_path.resolve().parent / path).resolve())

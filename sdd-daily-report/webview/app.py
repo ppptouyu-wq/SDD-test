@@ -33,7 +33,10 @@ STYLESHEET_FILE = "app.css"
 #: design.md §6.5(2)：只允许回环地址；出现 0.0.0.0 一律拒绝启动。
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
 
-DEFAULT_DB_PATH = "data/reports.db"
+#: 兜底库路径。锚在项目根而不是 cwd：合并成单仓库后项目嵌在子目录里，
+#: 从仓库根执行 `python sdd-daily-report/main.py --serve` 是自然动作。
+#: （main.py::_serve 通常会传入显式路径，这里只服务于直接调用 serve() 的场景。）
+DEFAULT_DB_PATH = str(Path(__file__).resolve().parent.parent / "data" / "reports.db")
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 

@@ -119,7 +119,7 @@ python run_all_tests.py     # 需先安装 pytest
 > 三个子项目都有名为 `tests` 的同名包，无法由单次 `pytest` 一起收集，
 > 因此用 `run_all_tests.py` 分别为每个项目启动一个 pytest 进程。
 
-## 怎么运行（从本仓库根目录）
+## 怎么运行
 
 VS Code 打开本仓库根目录，按 <kbd>F5</kbd> 选启动配置即可（配置已随仓库提供）：
 
@@ -128,23 +128,37 @@ VS Code 打开本仓库根目录，按 <kbd>F5</kbd> 选启动配置即可（配
 | ① 演练：mock 数据（无需凭据） | **先跑这个**，用内置数据跑通全链路，不推送 |
 | ② 真实 GitHub 仓库（2026-04-24，不推送） | 拉真实提交，需 `GITHUB_TOKEN` |
 | ③ 健康检查（--check） | 逐项检查配置（缺凭据时报红属正常） |
-| ④ 今天（真实推送，慎用） | 正式运行，会真的发邮件 / 推飞书 |
-| ⑤ 跑全部测试（pytest） | 本项目全部用例 |
-| ⑥ 只跑当前打开的测试文件 | 调试单个测试文件用 |
-| ⑦ 展示页：本地只读查看已生成的日报（v1.2） | 起本地网页看日报，只读、只绑定回环地址 |
+| ④ 跑全部测试（三个项目） | 依次跑 `sdd-daily-report` / `kb-search` / `brownfield-demo` |
+| ⑤ 真实发邮件（mock 数据，会真的发信） | 用 `config.email.yaml` 演练推送 |
+| ⑥ 展示页：本地只读查看已生成的日报（v1.2） | 起本地网页看日报，只读、只绑定回环地址 |
 
-命令行等价写法（**必须在子项目自己的根目录运行**）：
+> 如果改成把 `sdd-daily-report` 单独当工作区打开，用的是它自带的
+> `sdd-daily-report/.vscode/launch.json`（7 个配置：把 ④ 换成「今天（真实推送）」，
+> 另有「跑全部测试（pytest）」「只跑当前打开的测试文件」，⑥ 顺延为 ⑦）。
+> VS Code 只读工作区根目录下的 `.vscode/`，两份配置各管各的场景，不会互相覆盖。
+
+命令行等价写法（**从任意目录都可以**）：
 
 ```bash
+# 从仓库根
+python sdd-daily-report/main.py --config sdd-daily-report/config.yaml --date 2026-08-20 --mock
+
+# 从项目目录（等价）
 cd sdd-daily-report
 python main.py --config config.yaml --date 2026-08-20 --mock
+
+# --serve 连配置都不需要，它会自己找到 data/reports.db
+python sdd-daily-report/main.py --serve
 ```
 
-两点容易踩坑：
+两点要注意：
 
-- **`main.py` 不能从仓库根目录跑**。三个子项目都有名为 `shared`、`generator` 的
-  同名顶层包，从别处运行会 `ModuleNotFoundError`，或按错误的工作目录找不到
-  `config.yaml`。F5 的启动配置已用 `cwd` 指向正确目录，手动跑请注意 `cd`。
+- **`main.py` 不依赖工作目录**。入口的默认配置（`DEFAULT_CONFIG`）、默认日报库
+  （`DEFAULT_STORAGE`）和配置里的相对 `storage_path` 都锚在项目根上，所以从仓库根、
+  项目目录或任意位置调用结果一致（回归测试：
+  `sdd-daily-report/tests/test_main.py::test_project_paths_are_anchored_at_the_project_root_not_cwd`）。
+  但 **`python -m pytest` 仍要在项目目录里跑** —— 三个子项目有同名顶层包（`shared`、
+  `generator`），怎么跑请看根目录的 `run_all_tests.py`。
 - **真实配置不在仓库里**。`config.yaml`、`config.github.yaml`、`tasks.sample.json`
   都被 `.gitignore` 排除（含路径等环境信息），仓库里只有 `.example` 模板。
   F5 会自动从 `.example` 复制一份；手动跑需先自行复制：

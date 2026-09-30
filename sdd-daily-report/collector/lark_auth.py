@@ -34,7 +34,11 @@ logger = get_logger("collector.lark_auth")
 # 用户身份读取群聊消息所需的 scope
 GROUP_MSG_SCOPE = "im:message.group_msg"
 
-DEFAULT_TOKEN_FILE = Path("data/lark_user_token.json")
+# 项目根目录（本文件在 collector/ 下）。默认路径锚在项目根而不是 cwd ——
+# 合并成单仓库后项目嵌在子目录里，从仓库根调用是很自然的动作。
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+DEFAULT_TOKEN_FILE = _PROJECT_ROOT / "data" / "lark_user_token.json"
 
 
 @dataclass

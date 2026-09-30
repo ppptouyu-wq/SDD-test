@@ -35,7 +35,12 @@ from shared.storage import ReportStorage
 
 logger = get_logger("main")
 
-DEFAULT_CONFIG = Path("config.yaml")
+# 项目根目录。合并成单仓库后项目嵌在 sdd-reproduction/sdd-daily-report/ 里，
+# 从仓库根执行 `python sdd-daily-report/main.py` 是自然动作（VS Code 按 F5 或点
+# 运行按钮时 cwd 就是工作区根），所以默认路径必须锚在项目根而不是 cwd。
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+DEFAULT_CONFIG = PROJECT_ROOT / "config.yaml"
 SOURCE_GITHUB = "GitHub"
 SOURCE_LARK_TASK = "飞书任务"
 SOURCE_LARK_MSG = "飞书消息"
@@ -518,7 +523,7 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-DEFAULT_STORAGE = Path("data/reports.db")
+DEFAULT_STORAGE = PROJECT_ROOT / "data" / "reports.db"
 
 
 def _serve(args: argparse.Namespace) -> int:

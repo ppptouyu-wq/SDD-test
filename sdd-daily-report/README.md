@@ -53,7 +53,7 @@
    一键运行依赖它自带的 `debugpy`，没装的话"运行和调试"里看不到下面这些配置。
 3. **选解释器**：`Ctrl+Shift+P` → 输入 `Python: Select Interpreter` → 选 Python 3.11+ 那个
    （你这台是 `D:\APP\Anaconda\python.exe`，3.12.7）。
-4. **按 F5 运行**：`Ctrl+Shift+D` 打开"运行和调试"，左上角下拉框里已预置 6 个配置：
+4. **按 F5 运行**：`Ctrl+Shift+D` 打开"运行和调试"，左上角下拉框里已预置 7 个配置：
 
    | 配置 | 作用 |
    |---|---|
@@ -61,8 +61,9 @@
    | ② 真实 GitHub 仓库（2026-04-24，不推送） | 拉真实提交 |
    | ③ 健康检查（--check） | 逐项检查配置 |
    | ④ 今天（真实推送，慎用） | 会真的发邮件/推飞书 |
-   | ⑤ 跑全部测试（pytest） | 287 个用例 |
+   | ⑤ 跑全部测试（pytest） | 331 个用例 |
    | ⑥ 只跑当前打开的测试文件 | 调试单个用例 |
+   | ⑦ 展示页：本地只读查看已生成的日报 | 起本地网页看日报（v1.2 新增） |
 
 > 配置②③④ 用的是 `config.github.yaml`。仓库里**只分发脱敏模板**
 > `config.github.yaml.example`，首次使用请复制：
@@ -72,9 +73,11 @@
 5. **看结果**：终端里打的是**日志**（JSON，中文不会乱码），**真正的日报写进了
    `data/reports.db`**。测试也可以点左侧烧瓶图标，在"测试"面板里逐个跑/调试。
 
-   想看日报内容本身，用 SQLite 工具打开库，或直接查：
+   想看日报内容本身，有三种办法：起展示页（浏览器里看，推荐）、导出成文件、直接查库：
 
    ```bash
+   python main.py --serve              # 浏览器打开 http://127.0.0.1:8000/
+   python _show_report.py              # 导出 data/reports/<日期>.md 与 .html
    python -c "import sqlite3;print(sqlite3.connect('data/reports.db').execute('SELECT report_date,team_name FROM daily_reports').fetchall())"
    ```
 
@@ -137,6 +140,12 @@ VS Code 里把 `.env.example` 复制成 `.env` 填好即可，`launch.json` 的�
 | `--tasks-file <路径>` | 从 JSON 文件读任务数据（飞书 API 不可用时的兜底，见下） |
 | `--check` | 健康检查，不生成日报 |
 | `--push` / `--no-push` | 强制推送 / 强制不推送 |
+| `--serve` | 启动本地只读展示页（v1.2），不采集、不生成、不推送 |
+| `--port <n>` | 展示页端口，默认 8000（仅与 `--serve` 同用） |
+| `--db <路径>` | 展示页读的日报库，默认取 `config.yaml` 的 `storage_path`，缺失时用 `data/reports.db`（仅与 `--serve` 同用） |
+
+> `--serve` **故意放在加载配置之前**：展示页只读 `data/reports.db`，
+> 不该因为本机没有 `config.yaml` 就起不来。库路径优先级：`--db` > `config.yaml` > `data/reports.db`。
 
 ### 飞书数据接不进来时怎么办
 
@@ -190,9 +199,12 @@ python check_email.py
 ```
 GitHub API ─┐
 飞书任务 API ─┼─▶ 采集层 collector ─▶ 生成层 generator ─▶ 推送层 notifier ─▶ 邮件 / 飞书群
-飞书消息 API ─┘                          ▲
-                                         │
+飞书消息 API ─┘                          ▲                │
+                                         │                ▼
                           共享基础层 shared（配置 / 日志 / 错误处理 / 存储）
+                                         ▲
+                                         │  （只读旁路，v1.2 新增）
+                            展示层 webview ─▶ 浏览器 http://127.0.0.1:8000/
 ```
 
 | 模块 | 职责 | 不负责 |
@@ -201,7 +213,11 @@ GitHub API ─┐
 | `generator/` | 组织数据生成 Markdown/HTML 日报 | 不做采集、API 调用、推送 |
 | `notifier/` | 推送日报到邮件与飞书群 | 不做数据处理、日报生成、采集 |
 | `shared/` | 配置、日志、错误处理、SQLite 存储 | — |
+| `webview/` | 把库里的日报渲染成本地只读网页（v1.2） | 不做采集、生成、推送、写库 |
 | `main.py` | 编排"采集→聚合→生成→推送" | — |
+
+> `webview/` 是**只读旁路**：它从 `shared.storage` 读，不反向依赖任何业务模块，
+> 因此 `main.py` 的 Cron 链路完全不关心它是否存在。
 
 ## 规范（第一手工件）
 
@@ -209,9 +225,9 @@ GitHub API ─┐
 |---|---|
 | `specs/proposal.md` | 要解决什么问题（做什么 / 不做什么 / 怎么验收） |
 | `specs/design.md` | 用什么结构解决（架构 / 模块职责 / 数据模型 / 接口契约 / ADR / 非功能约束） |
-| `specs/tasks.md` | 按什么顺序交付（Task 1~11，每任务含输入/输出/依赖/验收标准） |
+| `specs/tasks.md` | 按什么顺序交付（Task 1~12，每任务含输入/输出/依赖/验收标准） |
 | `specs/contracts/data-models.md` | 数据模型字段级契约 |
-| `specs/adrs/` | ADR-001 httpx / ADR-002 SQLite / ADR-003 CollectResult |
+| `specs/adrs/` | ADR-001 httpx / ADR-002 SQLite / ADR-003 CollectResult / ADR-004 展示层技术选型 |
 
 ## 任务进度
 
@@ -228,6 +244,7 @@ GitHub API ─┐
 | 9 | 主编排入口 | ✅ |
 | 10 | 集成测试 | ✅ |
 | 11 | 考勤采集模块（v1.1 新增） | ✅ |
+| 12 | 本地只读展示层（v1.2 新增） | ✅ |
 
 ## v1.1 迭代（书中第 7 章 7.5）
 
@@ -238,6 +255,49 @@ GitHub API ─┐
 3. **更新 `tasks.md`**：新增 Task 11；同步修改受影响的 Task 6（日报生成加工时统计）。
 4. **逆向回溯**：实现中发现 `collect() -> list[Record]` 无法区分"无数据"与"采集失败"，违反 proposal.md §3.2"失败必须显式标注"。按 SDD 原则**回到规范层**修复，新增 **ADR-003** 将返回类型改为 `CollectResult{success, records, error_message}`，而不是在代码里打补丁。
 5. **全量回归**：`python -m pytest` 全部通过。
+
+## v1.2 迭代：本地只读展示页（书中第 7 章 7.4~7.5）
+
+第二次真实需求变更，走的是书里图 7-4「需求变更的 SDD 流程：自上而下的涟漪」与
+图 7-8「完整的 SDD 迭代循环」：
+
+1. **判定变更类型**：引入一个页面上能看到日报的展示层 → 改变了"做什么"，
+   属**需求变更**，起点是 `proposal.md`（不是代码）。
+2. **更新 `proposal.md`**：§2.1 新增"本地 Web 展示页"；§2.2 排除项补上
+   不做登录/权限、不做编辑与重新生成、不做搜索与图表、不做手机端；§3 新增验收标准。
+3. **更新 `design.md`**：新增展示层视图模型、`status` 推导规则、
+   `webview.list_reports/get_report/serve` 接口签名，以及 §6.5 三条硬约束。
+4. **更新 `tasks.md`**：新增 Task 12（13 条验收标准），标注它不在关键路径上。
+5. **写 ADR-004**：运行时零新增依赖（用标准库 `http.server`，不引 FastAPI/Flask），
+   视觉采用已有设计系统的令牌。ADR 只追加、不修改。
+6. **回溯更新规范**（图 7-8 的"规范缺陷 → 回溯更新规范"分支）：实现中发现
+   老日报没有记录数据源成败，原文把"`sources` 为空"并入 `failed`，等于把
+   **"没记录"说成"全部失败"**。没有在代码里绕过去，而是回到规范层拆出第四态
+   `unknown`（页面文案"未记录数据源状态"），并记入 ADR-004 的补充记录。
+7. **全量回归**：`python -m pytest` 全绿。
+
+### 展示页怎么用
+
+```bash
+python main.py --serve                # 默认 http://127.0.0.1:8000/ ，读 data/reports.db
+python main.py --serve --port 8010    # 换端口
+python main.py --serve --db other.db  # 换日报库
+```
+
+三条约束由 `scripts/input_guard.py` 的规则 4 强制（违反即被护栏拦下）：
+
+| 约束 | 落点 |
+|---|---|
+| **只读** | SQLite 用 `mode=ro` 打开，`save()` 在连接层就失败；HTTP 写方法一律 405 |
+| **只绑定回环地址** | 传 `0.0.0.0` 直接拒绝启动（退出码 2） |
+| **运行时零新增依赖** | 只用标准库 + 原生 HTML/CSS/JS，无框架、无构建步骤 |
+
+页面区分**四种**状态：`数据源正常` / `部分数据源失败` / `数据源全部失败` /
+`未记录数据源状态`。最后一类专指 v1.2 之前生成的老日报。
+
+代码分层：`webview/views.py`（纯逻辑，可脱离 HTTP 单测）、
+`webview/app.py`（HTTP 薄壳，只做请求→视图→响应的翻译）、
+`webview/static/`（`index.html` + `app.css`，原生单页，两级：#/ 列表、#/report/<日期> 详情）。
 
 ### 测试文件与书 7.5.6 的对应
 
@@ -255,9 +315,10 @@ GitHub API ─┐
 | `tests/test_main.py` | 14 | `main.py` 入口：编排、`load_dotenv`、`load_tasks_file`、CLI 退出码 |
 | `tests/test_integration.py` | 10 | 端到端集成：全链路、单源失败不阻塞、非工作日跳过 |
 
-另有 9 个测试文件覆盖第 8~10 章的 Agent 设计模式与治理层（书里未规定文件清单）：
+另有 10 个测试文件覆盖第 8~10 章的 Agent 设计模式与治理层（书里未规定文件清单）：
 `test_agents.py`、`test_team_practice.py`、`test_contracts.py`、`test_framework.py`、
-`test_suitability.py`、`test_tool_configs.py`、`test_harness.py`、`test_shared.py`、`test_dockerfile.py`。
+`test_suitability.py`、`test_tool_configs.py`、`test_harness.py`、`test_shared.py`、
+`test_dockerfile.py`，以及 v1.2 新增的 `test_webview.py`（44 个用例）。
 
 在本目录下，书中那条命令可以一字不改地运行：
 

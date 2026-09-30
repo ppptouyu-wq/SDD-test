@@ -70,17 +70,47 @@ python -c "import sqlite3;print(sqlite3.connect('data/reports.db').execute('SELE
 > **`data/` 整个目录被 `.gitignore` 忽略，不会上传**——日报里含真实仓库名和群消息。
 > 导出的 md / html 同样落在 `data/` 内，也不会进仓库。
 
+### 展示页（v1.2 迭代）：在浏览器里看日报
+
+不想导出文件，也可以直接起一个本地只读网页：
+
+```bash
+cd sdd-daily-report
+python main.py --serve              # 浏览器打开 http://127.0.0.1:8000/
+python main.py --serve --port 8010  # 换端口
+python main.py --serve --db 其他库.db  # 换日报库
+```
+
+这是**第 7 章「需求变更的 SDD 流程」的一次完整演练**：先按图 7-4 自上而下更新
+`proposal.md` → `design.md` → `tasks.md`，再按图 7-8 的闭环落地代码与测试。产物：
+
+- `specs/proposal.md` §2.1/§2.2/§3.1：新增需求、收紧排除项、新增验收标准；
+- `specs/design.md` §3.2/§4/§6.5：视图模型、`status` 推导、接口签名与三条展示层约束；
+- `specs/contracts/data-models.md`、`specs/contracts/api-spec.yaml`：同步视图模型与枚举；
+- `specs/tasks.md` Task 12；`specs/adrs/004-展示层技术选型.md`（ADR 只追加）；
+- `webview/`：`views.py`（纯逻辑）/ `app.py`（标准库 HTTP 薄壳）/ `static/`（原生单页）。
+
+三条硬约束（`design.md` §6.5，由 `scripts/input_guard.py` 的规则 4 强制）：
+
+1. **只读**——`SQLite` 以 `mode=ro` 打开，写操作在连接层就失败；HTTP 写方法一律 405；
+2. **只绑定回环地址**——传 `0.0.0.0` 会被拒绝启动（退出码 2）；
+3. **运行时零新增依赖**——只用 Python 标准库 + 原生 HTML/CSS/JS，无框架、无构建步骤。
+
+页面上会区分**四种**日报状态：`数据源正常` / `部分数据源失败` / `数据源全部失败` /
+`未记录数据源状态`。最后一类专指 **v1.2 之前生成的老日报**——它们没有记录数据源成败，
+"没记录"不等于"全部失败"，所以单独成一态，不混进告警色阶。
+
 ---
 
 ## 子项目
 
 | 目录 | 内容 | 测试 |
 |---|---|---|
-| `sdd-daily-report/` | **主项目**「智能日报生成器」（第 4-7 章）。含 Agent 设计模式、团队实践与度量、适用性自评、Harness 审计 | 287 通过 |
+| `sdd-daily-report/` | **主项目**「智能日报生成器」（第 4-7 章）。含 Agent 设计模式、团队实践与度量、适用性自评、Harness 审计、本地只读展示页（v1.2 迭代） | 331 通过 |
 | `kb-search/` | **案例项目**「知识库语义搜索工具」（第 1-2 章） | 109 通过、1 跳过 |
 | `brownfield-demo/` | **Brownfield 四步法**演示（第 7.4 节） | 50 通过 |
 
-合计 **450 个测试**。一键运行：
+合计 **490 个测试**。一键运行：
 
 ```bash
 python run_all_tests.py     # 需先安装 pytest
@@ -98,8 +128,10 @@ VS Code 打开本仓库根目录，按 <kbd>F5</kbd> 选启动配置即可（配
 | ① 演练：mock 数据（无需凭据） | **先跑这个**，用内置数据跑通全链路，不推送 |
 | ② 真实 GitHub 仓库（2026-04-24，不推送） | 拉真实提交，需 `GITHUB_TOKEN` |
 | ③ 健康检查（--check） | 逐项检查配置（缺凭据时报红属正常） |
-| ④ 跑全部测试（三个项目） | 450 个用例，等价于 `python run_all_tests.py` |
-| ⑤ 真实发邮件（mock 数据，会真的发信） | 用 mock 数据 + 真发信，验证邮件通道 |
+| ④ 今天（真实推送，慎用） | 正式运行，会真的发邮件 / 推飞书 |
+| ⑤ 跑全部测试（pytest） | 本项目全部用例 |
+| ⑥ 只跑当前打开的测试文件 | 调试单个测试文件用 |
+| ⑦ 展示页：本地只读查看已生成的日报（v1.2） | 起本地网页看日报，只读、只绑定回环地址 |
 
 命令行等价写法（**必须在子项目自己的根目录运行**）：
 
@@ -198,8 +230,8 @@ SMTP_PASSWORD=你的 QQ 邮箱授权码     # 注意是"授权码"，不是登�
 | 第 3 章 | 工具链全景、四层生态、`docs/SDD开源框架对照.md`、`sdd_agents/framework.py`（图 3-7 决策树） |
 | 第 4 章 | `specs/proposal.md` + `specs/contracts/api-spec.yaml` |
 | 第 5 章 | `specs/design.md` + ADR-001/002/003 |
-| 第 6 章 | `specs/tasks.md`（Task 1-11）+ 子智能体并行调度 |
-| 第 7 章 | 三层测试、验证与迭代、v1.1 迭代、Brownfield 补规范 |
+| 第 6 章 | `specs/tasks.md`（Task 1-12）+ 子智能体并行调度 |
+| 第 7 章 | 三层测试、验证与迭代、v1.1 与 v1.2 两次需求变更迭代、Brownfield 补规范 |
 | 第 8 章 | 生成—评审、层级委托、护栏三明治、条件路由；`sdd_agents/harness.py`（Harness 审计） |
 | 第 9 章 | 三阶段/三角色/治理检查/度量；`team-templates/` |
 | 第 10 章 | `sdd_agents/suitability.py`（SDD 适用性自评） |
@@ -240,23 +272,26 @@ python -m pytest tests/ -v
 | `tests/test_integration.py` | ✅ | 10 |
 
 除书列的 9 个之外，本复现为第 8~10 章的 Agent 设计模式与治理层另建了
-9 个测试文件（`test_agents.py` 26、`test_team_practice.py` 32、`test_contracts.py` 30、
+10 个测试文件（`test_agents.py` 26、`test_team_practice.py` 32、`test_contracts.py` 30、
 `test_framework.py` 21、`test_suitability.py` 20、`test_tool_configs.py` 20、
-`test_harness.py` 16、`test_shared.py` 18、`test_dockerfile.py` 7）。
+`test_harness.py` 16、`test_shared.py` 18、`test_dockerfile.py` 7），
+以及 v1.2 迭代新增的 `test_webview.py` 44。
 
 三点如实说明：
 
 - **`run_all_tests.py` 是本仓库的包装脚本，不是书中要求。** 三个子项目都有名为
   `tests` 的顶层包，pytest 在仓库根统一收集会模块名冲突，所以只能逐项目起进程。
   在任一子项目根目录内，书中那条命令原样可用。
-- **`main.py` 的 `--mock` / `--push` / `--check` 三种运行模式书中没有**，
+- **`main.py` 的 `--mock` / `--push` / `--check` / `--serve` 四种运行模式书中没有**，
   属于 `specs/design.md` 的实现便利（`--mock` 让你不配凭据也能看见全链路跑通，
-  `--mock` 默认不推送是为了防止调试时误发信）。它们不是验收依据，pytest 才是。
+  `--mock` 默认不推送是为了防止调试时误发信；`--serve` 是 v1.2 需求变更的产物）。
+  它们不是验收依据，pytest 才是。
 
 ## 真实链路验证情况
 
 **已真实验证**：GitHub 采集、邮件推送（QQ SMTP）、飞书群推送、飞书群消息采集、
-飞书任务/通讯录/群列表接口。
+飞书任务/通讯录/群列表接口、展示页（`--serve` 的 HTTP 端到端：列表 / 详情 / 静态资源 /
+写请求 405 / 老日报判定为 `未记录数据源状态`）。
 
 **未真实验证**：飞书考勤（请求格式已按官方文档校准，但测试租户无考勤员工数据）、
 Qdrant / OpenAI Embedding（本地实现已验证）、性能验收 `<60s`（未在真实规模下测）。
@@ -266,12 +301,13 @@ Qdrant / OpenAI Embedding（本地实现已验证）、性能验收 `<60s`（未
 
 ## 关于提交历史
 
-本仓库为**快照式初始提交**：三个子项目的全部源码与文档已完整并入，
+本仓库为**快照式提交**：三个子项目的全部源码与文档已完整并入，
 但各自的**逐条提交历史未并入**（复现环境里 `git subtree` 不可用）。
-因此这里只有 1 个初始提交，看不到每个模块"一次 Task 一个提交"的演进过程。
+因此这里看不到每个模块"一次 Task 一个提交"的演进过程 ——
+只有 1 个初始快照提交，加上之后 v1.2 需求变更的迭代提交。
 
 各子项目的历史**不在本仓库内**（也未上传），它们各自记录在**独立的原始仓库**中：
-`sdd-daily-report` 44 个提交、`kb-search` 2 个、`brownfield-demo` 2 个。
+`sdd-daily-report` 45 个提交、`kb-search` 2 个、`brownfield-demo` 2 个。
 
 之所以没有把历史一并带上来：这些历史里出现过飞书 `app_id`、群 `chat_id` 等应用标识
 （不是密钥，但既然公开上传，就没有必要带出去）。密钥本身自始至终只通过环境变量注入，

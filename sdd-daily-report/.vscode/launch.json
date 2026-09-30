@@ -63,6 +63,16 @@
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}",
       "justMyCode": false
+    },
+    {
+      "name": "⑦ 展示页：本地只读查看已生成的日报（v1.2）",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["--serve"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false
     }
   ]
 }

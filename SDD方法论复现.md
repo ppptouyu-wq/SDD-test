@@ -13,16 +13,19 @@
 > （SQLite，表 `daily_reports`，一天一条，含 markdown / html / payload 三份）。
 > 终端那几行 JSON 是日志，不是结果；日报不生成 md / html 文件。
 > `data/` 被 `.gitignore` 忽略，不会上传。详见 `README.md`「运行结果输出在哪」。
+>
+> **怎么看日报内容**：`python main.py --serve` 起本地只读网页（v1.2 迭代产物），
+> 或用 `_show_report.py` 导出成 md / html 文件。详见 `README.md`「展示页」。
 
 ## 子项目
 
 | 目录 | 内容 | 测试 |
 |---|---|---|
-| `sdd-daily-report/` | **主项目**「智能日报生成器」（第 4-7 章）。含 Agent 设计模式、团队实践与度量、适用性自评、Harness 审计 | 287 通过 |
+| `sdd-daily-report/` | **主项目**「智能日报生成器」（第 4-7 章）。含 Agent 设计模式、团队实践与度量、适用性自评、Harness 审计、本地只读展示页（v1.2 迭代） | 331 通过 |
 | `kb-search/` | **案例项目**「知识库语义搜索工具」（第 1-2 章） | 109 通过、1 跳过 |
 | `brownfield-demo/` | **Brownfield 四步法**演示（第 7.4 节） | 50 通过 |
 
-合计 **450 个测试**。一键运行：
+合计 **490 个测试**。一键运行：
 
 ```bash
 python run_all_tests.py     # 需先安装 pytest
@@ -35,9 +38,9 @@ python run_all_tests.py     # 需先安装 pytest
 | 第 1-2 章 | SDD 五大原则与六阶段工作流；`kb-search` 案例项目 |
 | 第 3 章 | 工具链全景、四层生态、`docs/SDD开源框架对照.md`、`sdd_agents/framework.py`（图 3-7 决策树） |
 | 第 4 章 | `specs/proposal.md` + `specs/contracts/api-spec.yaml` |
-| 第 5 章 | `specs/design.md` + ADR-001/002/003 |
-| 第 6 章 | `specs/tasks.md`（Task 1-11）+ 子智能体并行调度 |
-| 第 7 章 | 三层测试、验证与迭代、v1.1 迭代、Brownfield 补规范 |
+| 第 5 章 | `specs/design.md` + ADR-001/002/003/004 |
+| 第 6 章 | `specs/tasks.md`（Task 1-12）+ 子智能体并行调度 |
+| 第 7 章 | 三层测试、验证与迭代、v1.1 与 v1.2 两次需求变更迭代、Brownfield 补规范 |
 | 第 8 章 | 生成—评审、层级委托、护栏三明治、条件路由；`sdd_agents/harness.py`（Harness 审计） |
 | 第 9 章 | 三阶段/三角色/治理检查/度量；`team-templates/` |
 | 第 10 章 | `sdd_agents/suitability.py`（SDD 适用性自评） |
@@ -45,7 +48,7 @@ python run_all_tests.py     # 需先安装 pytest
 ## 真实链路验证情况
 
 **已真实验证**：GitHub 采集、邮件推送（QQ SMTP）、飞书群推送、飞书群消息采集、
-飞书任务/通讯录/群列表接口。
+飞书任务/通讯录/群列表接口、展示页（`--serve` 的 HTTP 端到端）。
 
 **未真实验证**：飞书考勤（请求格式已按官方文档校准，但测试租户无考勤员工数据）、
 Qdrant / OpenAI Embedding（本地实现已验证）、性能验收 `<60s`（未在真实规模下测）。
@@ -55,12 +58,13 @@ Qdrant / OpenAI Embedding（本地实现已验证）、性能验收 `<60s`（未
 
 ## 关于提交历史
 
-本仓库为**快照式初始提交**：三个子项目的全部源码与文档已完整并入，
+本仓库为**快照式提交**：三个子项目的全部源码与文档已完整并入，
 但各自的**逐条提交历史未并入**（复现环境里 `git subtree` 不可用）。
-因此这里只有 1 个初始提交，看不到每个模块"一次 Task 一个提交"的演进过程。
+因此这里看不到每个模块"一次 Task 一个提交"的演进过程 ——
+只有 1 个初始快照提交，加上之后 v1.2 需求变更的迭代提交。
 
 各子项目的历史**不在本仓库内**（也未上传），它们各自记录在**独立的原始仓库**中：
-`sdd-daily-report` 44 个提交、`kb-search` 2 个、`brownfield-demo` 2 个。
+`sdd-daily-report` 45 个提交、`kb-search` 2 个、`brownfield-demo` 2 个。
 
 之所以没有把历史一并带上来：这些历史里出现过飞书 `app_id`、群 `chat_id` 等应用标识
 （不是密钥，但既然公开上传，就没有必要带出去）。密钥本身自始至终只通过环境变量注入，

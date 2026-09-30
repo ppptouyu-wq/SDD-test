@@ -41,6 +41,7 @@ logger = get_logger("main")
 PROJECT_ROOT = Path(__file__).resolve().parent
 
 DEFAULT_CONFIG = PROJECT_ROOT / "config.yaml"
+DEFAULT_ENV = PROJECT_ROOT / ".env"
 SOURCE_GITHUB = "GitHub"
 SOURCE_LARK_TASK = "飞书任务"
 SOURCE_LARK_MSG = "飞书消息"
@@ -424,7 +425,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def load_dotenv(path: str | Path = ".env") -> int:
+def load_dotenv(path: str | Path | None = None) -> int:
     """把 .env 里的键值对加载进 os.environ，返回加载条数。
 
     只填**尚未设置**的变量（已存在的环境变量优先，方便临时覆盖）。
@@ -432,8 +433,12 @@ def load_dotenv(path: str | Path = ".env") -> int:
     空值、``#`` 注释、行首空行一律跳过，值两端的成对引号会被剥掉。
 
     与 design.md §6.2 的安全约束一致：凭据只进进程环境，不落到配置文件里。
+
+    ``path`` 省略时读 ``DEFAULT_ENV``（= 项目根下的 `.env`），**不是** cwd 下的
+    `.env`：合并成单仓库后从仓库根执行时 cwd 是仓库根，cwd 相对路径会静默读不到凭据，
+    真跑就降级成"数据源全部失败"——比直接报错更难排查。
     """
-    env_path = Path(path)
+    env_path = Path(path) if path is not None else DEFAULT_ENV
     if not env_path.exists():
         return 0
 

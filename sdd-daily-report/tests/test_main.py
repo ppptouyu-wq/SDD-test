@@ -5,7 +5,7 @@
 覆盖范围：
 - `main.run()` 的编排行为：mock 演练、推送开关、数据源状态汇总
 - `main.main()` 命令行入口的退出码
-- `main.load_dotenv()` 凭据注入（让 `.env.example` 的承诺真正生效）
+- `main.load_dotenv()` 凭据注入（让 `.env.example` 的承诺真正生效；默认读项目根下的 `.env`）
 - `main.load_tasks_file()` 手动任务数据通道（飞书 API 读不到任务时的兜底）
 - 路径锚定：默认配置 / 默认库路径 / 相对 `storage_path` 不随进程 cwd 漂移
 
@@ -238,8 +238,32 @@ def test_project_paths_are_anchored_at_the_project_root_not_cwd():
     assert Path(app.PROJECT_ROOT) == project_root
     assert Path(app.DEFAULT_CONFIG).is_absolute()
     assert Path(app.DEFAULT_CONFIG) == project_root / "config.yaml"
+    assert Path(app.DEFAULT_ENV).is_absolute()
+    assert Path(app.DEFAULT_ENV) == project_root / ".env"
     assert Path(app.DEFAULT_STORAGE).is_absolute()
     assert Path(app.DEFAULT_STORAGE) == project_root / "data" / "reports.db"
+
+
+def test_load_dotenv_defaults_to_the_project_env_not_cwd(tmp_dir, monkeypatch):
+    """`load_dotenv()` 不传参数时读项目根下的 `.env`，不读 cwd 下的 `.env`。
+
+    回归测试：默认参数曾写作 `path=".env"`（cwd 相对）。从仓库根执行时 cwd 是仓库根，
+    于是本项目真正那份 `.env` 被**静默**忽略，真跑降级成"数据源全部失败" —— 比直接报错
+    更难排查，因为它看起来像是凭据本身有问题。
+    """
+    env_file = tmp_dir / "project.env"
+    env_file.write_text("SDD_TEST_DEFAULT_ENV=yes\n", encoding="utf-8")
+    monkeypatch.delenv("SDD_TEST_DEFAULT_ENV", raising=False)
+
+    elsewhere = tmp_dir / "elsewhere"
+    elsewhere.mkdir()
+    # 在无关目录里放一份"诱饵" .env，确认它不会被读到
+    (elsewhere / ".env").write_text("SDD_TEST_DEFAULT_ENV=wrong\n", encoding="utf-8")
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setattr(app, "DEFAULT_ENV", env_file)
+
+    assert app.load_dotenv() == 1
+    assert app.os.environ["SDD_TEST_DEFAULT_ENV"] == "yes"
 
 
 def test_relative_storage_path_resolves_against_the_config_file(tmp_dir, monkeypatch):

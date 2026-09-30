@@ -2,9 +2,10 @@
 
 ## 元信息
 - 关联规范: specs/proposal.md、specs/design.md
-- 任务总数: 11
-- 预计总执行时间: 3到4h（包含测试）
+- 任务总数: 12
+- 预计总执行时间: 4到5h（包含测试）
 - 执行策略: 按依赖关系顺序执行，独立任务可并行执行
+- 迭代记录: v1.1 新增 Task 11 并修改 Task 6/Task 10；v1.2 新增 Task 12
 
 ---
 
@@ -212,6 +213,42 @@
 
 ---
 
+## Task 12: 实现本地只读展示层（新增 v1.2）
+
+描述: 从 SQLite 日报库读取已生成的日报，在本机浏览器中提供"列表 → 详情"两级只读浏览，
+并把三种异常状态（数据源失败 / 考勤不可用 / 无日报记录）显式呈现在页面上
+
+输入:
+  design.md §3.2（视图模型）、design.md §4（展示层接口契约）
+  design.md §6.5（展示层约束：只读 / 只监听回环地址 / 零新增依赖 / 设计令牌）
+  contracts/api-spec.yaml 的 paths（三个只读端点）
+  contracts/data-models.md §3（视图模型字段级契约）
+输出:
+  webview/__init__.py
+  webview/views.py（读库 → 视图模型 → 状态判定，纯逻辑，不依赖 HTTP 设施）
+  webview/app.py（把 HTTP 请求翻译成 views 调用）
+  webview/static/index.html、app.css
+  main.py 的 --serve / --port 参数
+  tests/test_webview.py
+依赖: Task 2（存储层）、Task 6（日报生成；本任务新增 DailyReport.sources 字段的读取）
+
+验收标准:
+- [ ] 展示层对 data/reports.db 只执行查询，全程无写操作（design.md §6.5(1)）
+- [ ] 服务默认只绑定 127.0.0.1，不接受来自其他主机的连接（§6.5(2)）
+- [ ] 未新增任何运行时依赖：不引入 Web 框架，无构建步骤，标准库即可启动（§6.5(3)、ADR-004）
+- [ ] `GET /api/reports` 返回全部日报的列表项，按日报日期倒序（proposal.md §3.1 v1.2）
+- [ ] `GET /api/reports/{date}` 返回该日详情；无记录时返回明确错误码而非空白页
+- [ ] status 判定：sources 全为 true → `ok`；部分 false → `partial`；全 false → `failed`；为空 → `unknown`（design.md §3.2）
+- [ ] `sources` 为空的历史日报判定为 `unknown`，页面标注"未记录数据源状态"而非"数据源全部失败"（design.md §3.2、ADR-004 补充记录）
+- [ ] 详情页对失败数据源标注"数据获取失败"，且与"今日无记录"在视觉上可区分
+- [ ] 成员 attendance 为 None 时显示"考勤数据暂不可用"
+- [ ] 数据库中无任何日报时，首页显示空态提示，不报错、不白屏
+- [ ] 对页面地址发起写操作（POST/DELETE 等）返回明确错误且不产生任何数据变更
+- [ ] 页面视觉使用 design.md §6.5(4) 的 ant 设计令牌值，错误态用 `--danger` 而非 `--accent`
+- [ ] 基于临时 SQLite 库的单元测试全部通过
+
+---
+
 ## 执行顺序与依赖关系
 
 ```
@@ -220,6 +257,7 @@ Task 1 ──▶ Task 2 ──┬──▶ Task 3  ┐
                     ├──▶ Task 5  ┘        ▲
                     ├──▶ Task 6 ──┬──▶ Task 7 ┘
                     │             └──▶ Task 8
+                    │             └──▶ Task 12（v1.2 新增，只读旁路）
                     └──▶ Task 11（v1.1 新增）──▶ Task 6（v1.1 变更）
 ```
 
@@ -227,6 +265,9 @@ Task 1 ──▶ Task 2 ──┬──▶ Task 3  ┐
 - **最大并行度**：3（Task 3 + Task 4 + Task 5 同时执行）
 - Task 7、Task 8 可并行执行
 - v1.1 增量路径：Task 2 → Task 11 → Task 6（考勤数据接入日报）
+- v1.2 增量路径：Task 2 → Task 6 → Task 12（展示层读库渲染）
+  —— 展示层不接入采集链路，只读 `data/reports.db`，因此**不在关键路径上**；
+  它也可以与 Task 7/Task 8 并行执行。
 
 ## 任务粒度自评（对应 §6.2）
 
@@ -236,5 +277,6 @@ Task 1 ──▶ Task 2 ──┬──▶ Task 3  ┐
 | Task 3 | ~120 行 | 是（Mock HTTP） | 合适 |
 | Task 6 | ~180 行 | 是（Mock 数据） | 合适 |
 | Task 9 | ~100 行 | 是（集成测试） | 合适 |
+| Task 12 | ~200 行（含静态页面） | 是（临时 SQLite 库 + 视图模型断言） | 合适（略偏上沿，故逻辑与 HTTP 壳分离） |
 
 均落在"50~200 行 / 产出可测试交付物"的最佳区间内。

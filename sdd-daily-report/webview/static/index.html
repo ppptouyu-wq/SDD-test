@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1024">
+<meta name="color-scheme" content="light">
+<title>智能日报生成器 — 本地只读查看</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<header class="appbar">
+  <div class="wrap">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span>智能日报生成器</div>
+    <span class="ro" title="本地只读视图">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg>
+      只读
+    </span>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- ============ 列表页 ============ -->
+  <section id="view-list" class="view" aria-labelledby="h-list">
+    <div class="wrap page">
+      <div class="page-head">
+        <h1 class="page-title" id="h-list" tabindex="-1" data-focus>日报记录</h1>
+        <p class="page-desc">本机已生成的团队日报，按日期倒序排列。</p>
+      </div>
+      <div class="sec-head">
+        <h2 class="sec-title">全部日报</h2>
+        <span class="sec-ext num" id="list-count"></span>
+      </div>
+      <div id="list-body"></div>
+    </div>
+  </section>
+
+  <!-- ============ 详情页 ============ -->
+  <section id="view-detail" class="view" hidden aria-labelledby="h-detail">
+    <div class="wrap page">
+      <a class="back" href="#/">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+        返回列表
+      </a>
+      <div id="detail-body"></div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---- 固定文案（与后端 webview/views.py 逐字一致，含标点） ---- */
+  var TEXT = {
+    brand: "智能日报生成器",
+    readOnly: "只读",
+    pageTitle: "智能日报生成器 — 本地只读查看",
+    listTitle: "日报记录",
+    detailTitle: "日报详情",
+    backToList: "返回列表",
+    membersTitle: "成员日报",
+    emptyTitle: "还没有生成过日报",
+    emptyDesc: "本机数据库暂无记录。等待 18:00 定时任务首次生成后即可在此查看。",
+    sourceFailed: "数据获取失败",
+    attendanceUnavailable: "考勤数据暂不可用",
+    noRecordToday: "今日无记录",
+    noReportForDate: "该日期没有日报记录",
+    sourcesUnrecorded: "未记录数据源状态",
+    sourcesUnrecordedHint: "该日报生成于数据源状态记录功能上线之前，未记录数据源状态。",
+    noMembers: "本期日报没有成员记录",
+    loadFailed: "页面数据加载失败",
+    unknownError: "未知错误",
+    segmentCommits: "代码提交",
+    segmentTasks: "任务进展",
+    segmentAttendance: "考勤",
+    segmentMessages: "协作沟通",
+    attCheckIn: "签到",
+    attCheckOut: "签退",
+    attHours: "工时",
+    attStatus: "状态",
+    dash: "—",
+    unitMembers: " 名成员 · 生成于 ",
+    unitHours: " h",
+    unitFiles: " 文件",
+    statusOk: "数据源正常",
+    statusPartial: "部分数据源失败",
+    statusFailed: "数据源全部失败"
+  };
+
+  /* ---- status 四态 → 徽标文案 + 类名 ---- */
+  var STATUS_OK = "ok";
+  var STATUS_PARTIAL = "partial";
+  var STATUS_FAILED = "failed";
+  var STATUS_UNKNOWN = "unknown";
+
+  function statusInfo(status) {
+    if (status === STATUS_OK) return { text: TEXT.statusOk, cls: "badge ok" };
+    if (status === STATUS_PARTIAL) return { text: TEXT.statusPartial, cls: "badge warn" };
+    if (status === STATUS_FAILED) return { text: TEXT.statusFailed, cls: "badge err" };
+    return { text: TEXT.sourcesUnrecorded, cls: "badge muted" };
+  }
+
+  /* ---- 内联 SVG 图标 ---- */
+  var ICONS = {
+    chev: '<svg class="row-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>',
+    commits: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M3 12h5.8M15.2 12H21"/></svg>',
+    tasks: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5l1.4 1.4L8 5.4"/><path d="M4 12.5l1.4 1.4L8 11.4"/><path d="M4 18.5l1.4 1.4L8 17.4"/><path d="M11.5 6.5H20M11.5 12.5H20M11.5 18.5H20"/></svg>',
+    attendance: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><path d="M12 7.4v4.9l3.2 2"/></svg>',
+    messages: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.3a3 3 0 0 1-3 3H8.6L4 21V6.7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3z"/></svg>',
+    fail: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg>',
+    warn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5.2"/><path d="M12 16.4h.01"/></svg>',
+    empty: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13.5l2-7A2 2 0 0 1 7.9 5h8.2a2 2 0 0 1 1.9 1.5l2 7"/><path d="M4 13.5V18a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4.5h-4.2a2 2 0 0 1-3.9 0z"/></svg>',
+    missingDate: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="16" rx="2"/><path d="M3.5 9.5h17M8 3v4M16 3v4"/><path d="M12 13.5v3.2M12 19.1h.01"/></svg>'
+  };
+
+  var WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+  var FAIL = /<[^>]*>/g;
+
+  /* ---- 小工具（全部用 DOM API，不用 innerHTML 承载数据） ---- */
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined && text !== null) node.textContent = String(text);
+    return node;
+  }
+
+  function icon(key) {
+    var span = document.createElement("span");
+    span.className = "ic";
+    span.setAttribute("aria-hidden", "true");
+    span.innerHTML = ICONS[key];
+    return span;
+  }
+
+  function clearText(value) {
+    if (typeof value !== "string") return value === 0 || value === false ? String(value) : "";
+    return value.replace(FAIL, " ");
+  }
+
+  function safeJson(response) {
+    return response.json().catch(function () { return null; });
+  }
+
+  /* ---- 展示格式化 ---- */
+  function timeOf(value) {
+    if (typeof value !== "string" || value.length < 16) return TEXT.dash;
+    return value.slice(11, 16);
+  }
+
+  function dateOf(value) {
+    if (typeof value !== "string" || value.length < 10) return value || TEXT.dash;
+    return value.slice(0, 10);
+  }
+
+  function monthDay(value) {
+    if (typeof value !== "string" || value.length < 10) return value || TEXT.dash;
+    return value.slice(5, 10);
+  }
+
+  function weekdayOf(value) {
+    if (typeof value !== "string" || value.length < 10) return "";
+    var parts = value.slice(0, 10).split("-");
+    var day = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    if (isNaN(day.getTime())) return "";
+    return WEEKDAYS[day.getDay()];
+  }
+
+  function clockOf(value) {
+    if (typeof value !== "string" || value.length < 5) return TEXT.dash;
+    var head = value.slice(0, 5);
+    return /^\d{2}:\d{2}$/.test(head) ? head : value;
+  }
+
+  function fileCount(value) {
+    var count = Number(value);
+    if (!isFinite(count) || count < 0) count = 0;
+    return count + TEXT.unitFiles;
+  }
+
+  function memberMeta(item) {
+    var count = Number(item && item.member_count);
+    if (!isFinite(count) || count < 0) count = 0;
+    return String(count) + TEXT.unitMembers + timeOf(item && item.generated_at);
+  }
+
+  /* ---- 组件：状态徽标 ---- */
+  function badgeNode(status) {
+    var info = statusInfo(status);
+    var node = el("span", info.cls);
+    node.appendChild(el("span", "dot"));
+    node.appendChild(document.createTextNode(info.text));
+    return node;
+  }
+
+  /* ---- 组件：数据源 chip ---- */
+  function chipNode(source) {
+    var name = clearText(source && source.name) || TEXT.dash;
+    if (source && source.success === false) {
+      var failed = el("span", "chip failed");
+      failed.appendChild(icon("fail"));
+      failed.appendChild(document.createTextNode(name));
+      failed.appendChild(el("span", "sep", "·"));
+      failed.appendChild(document.createTextNode(TEXT.sourceFailed));
+      return failed;
+    }
+    var ok = el("span", "chip");
+    ok.appendChild(el("span", "dot"));
+    ok.appendChild(document.createTextNode(name));
+    return ok;
+  }
+
+  /* ---- 组件：空态 / 错误态 ---- */
+  function emptyBlock(title, desc, iconKey) {
+    var box = el("div", "empty");
+    box.appendChild(icon(iconKey || "empty"));
+    box.appendChild(el("p", "empty-t", title));
+    if (desc) box.appendChild(el("p", "empty-d", desc));
+    return box;
+  }
+
+  /* ---- 组件：列表项 ---- */
+  function rowNode(item) {
+    var anchor = el("a", "row");
+    anchor.href = "#/report/" + encodeURIComponent(String(item.date || ""));
+
+    var dateBox = el("div", "row-date");
+    var day = el("span", "d num", monthDay(item.date));
+    dateBox.appendChild(day);
+    var week = weekdayOf(item.date);
+    if (week) dateBox.appendChild(el("span", "w", week));
+    anchor.appendChild(dateBox);
+
+    var main = el("div", "row-main");
+    main.appendChild(el("div", "row-team", clearText(item.team_name)));
+    main.appendChild(el("div", "row-meta num", memberMeta(item)));
+    anchor.appendChild(main);
+
+    var right = el("div", "row-right");
+    right.appendChild(badgeNode(item.status));
+    right.appendChild(icon("chev"));
+    anchor.appendChild(right);
+
+    return anchor;
+  }
+
+  /* ---- 组件：成员卡片的一段 ---- */
+  function segmentNode(titleKey, iconKey, count, buildContent) {
+    var seg = el("section", "seg");
+    var head = el("div", "seg-h");
+    head.appendChild(icon(iconKey));
+    head.appendChild(el("span", "seg-t", TEXT[titleKey]));
+    if (typeof count === "number") head.appendChild(el("span", "seg-c num", count));
+    seg.appendChild(head);
+    buildContent(seg);
+    return seg;
+  }
+
+  function noRecordNode() {
+    return el("span", "norec", TEXT.noRecordToday);
+  }
+
+  function itemNode(mainText, metaNodes, withNum) {
+    var item = el("div", "item");
+    item.appendChild(el("span", "item-main", clearText(mainText)));
+    if (metaNodes && metaNodes.length) {
+      var meta = el("span", withNum === false ? "item-meta" : "item-meta num");
+      for (var i = 0; i < metaNodes.length; i++) meta.appendChild(metaNodes[i]);
+      item.appendChild(meta);
+    }
+    return item;
+  }
+
+  function sepNode() {
+    return el("span", "sep", "·");
+  }
+
+  function fillCommits(seg, commits) {
+    if (!commits.length) return void seg.appendChild(noRecordNode());
+    for (var i = 0; i < commits.length; i++) {
+      var commit = commits[i] || {};
+      var meta = [];
+      meta.push(el("span", "repo", clearText(commit.repo)));
+      if (commit.timestamp) {
+        meta.push(sepNode());
+        meta.push(document.createTextNode(timeOf(commit.timestamp)));
+      }
+      meta.push(sepNode());
+      meta.push(el("span", "add", "+" + toWhole(commit.additions)));
+      meta.push(document.createTextNode(" "));
+      meta.push(el("span", "del", "−" + toWhole(commit.deletions)));
+      meta.push(sepNode());
+      meta.push(document.createTextNode(fileCount(commit.files_changed)));
+      seg.appendChild(itemNode(commit.message, meta));
+    }
+  }
+
+  function fillTasks(seg, tasks) {
+    if (!tasks.length) return void seg.appendChild(noRecordNode());
+    for (var i = 0; i < tasks.length; i++) {
+      var task = tasks[i] || {};
+      var meta = [];
+      meta.push(el("span", "st-from", clearText(task.status_from)));
+      meta.push(el("span", "st-arrow", "→"));
+      meta.push(el("span", "st-to", clearText(task.status_to)));
+      if (task.updated_at) {
+        meta.push(sepNode());
+        meta.push(document.createTextNode(timeOf(task.updated_at)));
+      }
+      seg.appendChild(itemNode(task.title, meta));
+    }
+  }
+
+  function toWhole(value) {
+    var num = Number(value);
+    if (!isFinite(num) || num < 0) num = 0;
+    return String(num);
+  }
+
+  function fillAttendance(seg, attendance) {
+    if (!attendance) {
+      var notice = el("div", "notice");
+      notice.appendChild(icon("warn"));
+      notice.appendChild(document.createTextNode(TEXT.attendanceUnavailable));
+      seg.appendChild(notice);
+      return;
+    }
+    var list = el("dl", "att");
+    var cells = [
+      [TEXT.attCheckIn, clockOf(attendance.check_in), ""],
+      [TEXT.attCheckOut, clockOf(attendance.check_out), ""],
+      [TEXT.attHours, toHours(attendance.work_hours) + TEXT.unitHours, ""],
+      [TEXT.attStatus, clearText(attendance.status), attendance.status === "正常" ? "hl-ok" : "hl-warn"]
+    ];
+    for (var i = 0; i < cells.length; i++) {
+      var box = document.createElement("div");
+      box.appendChild(el("dt", null, cells[i][0]));
+      box.appendChild(el("dd", "num " + cells[i][2], cells[i][1]));
+      list.appendChild(box);
+    }
+    seg.appendChild(list);
+  }
+
+  function toHours(value) {
+    var num = Number(value);
+    if (!isFinite(num) || num < 0) num = 0;
+    return num.toFixed(1);
+  }
+
+  function fillMessages(seg, messages) {
+    if (!messages.length) return void seg.appendChild(noRecordNode());
+    for (var i = 0; i < messages.length; i++) {
+      var message = messages[i] || {};
+      var meta = [];
+      meta.push(document.createTextNode(clearText(message.sender)));
+      meta.push(sepNode());
+      meta.push(document.createTextNode(clearText(message.chat_name)));
+      if (message.timestamp) {
+        meta.push(sepNode());
+        meta.push(document.createTextNode(timeOf(message.timestamp)));
+      }
+      seg.appendChild(itemNode(message.content, meta, false));
+    }
+  }
+
+  /* ---- 组件：成员卡片 ---- */
+  function memberCardNode(member) {
+    var card = el("article", "mcard");
+    var head = el("header", "mcard-h");
+    head.appendChild(el("span", "mcard-name", clearText(member.name)));
+    var sub = el("span", "mcard-sub", clearText(member.github_username));
+    head.appendChild(sub);
+    card.appendChild(head);
+
+    var body = el("div", "mcard-body");
+    var commits = Array.isArray(member.commits) ? member.commits : [];
+    var tasks = Array.isArray(member.tasks) ? member.tasks : [];
+    var messages = Array.isArray(member.messages) ? member.messages : [];
+
+    body.appendChild(segmentNode("segmentCommits", "commits", commits.length, function (seg) {
+      fillCommits(seg, commits);
+    }));
+    body.appendChild(segmentNode("segmentTasks", "tasks", tasks.length, function (seg) {
+      fillTasks(seg, tasks);
+    }));
+    body.appendChild(segmentNode("segmentAttendance", "attendance", null, function (seg) {
+      fillAttendance(seg, member.attendance || null);
+    }));
+    body.appendChild(segmentNode("segmentMessages", "messages", messages.length, function (seg) {
+      fillMessages(seg, messages);
+    }));
+
+    card.appendChild(body);
+    return card;
+  }
+
+  /* ---- 列表页 ---- */
+  var listBody = document.getElementById("list-body");
+  var listCount = document.getElementById("list-count");
+
+  function setListCount(items) {
+    listCount.textContent = items ? "共 " + items.length + " 期" : "";
+  }
+
+  function renderListEmpty() {
+    setListCount(null);
+    listBody.replaceChildren(emptyBlock(TEXT.emptyTitle, TEXT.emptyDesc, "empty"));
+  }
+
+  function renderListError() {
+    setListCount(null);
+    listBody.replaceChildren(emptyBlock(TEXT.loadFailed, TEXT.emptyDesc, "empty"));
+  }
+
+  function renderList(items) {
+    if (!Array.isArray(items) || items.length === 0) return renderListEmpty();
+    setListCount(items);
+    var list = el("div", "list");
+    for (var i = 0; i < items.length; i++) list.appendChild(rowNode(items[i] || {}));
+    listBody.replaceChildren(list);
+  }
+
+  function loadList() {
+    listBody.replaceChildren();
+    setListCount(null);
+    return fetch("/api/reports", { headers: { Accept: "application/json" } })
+      .then(function (response) {
+        return safeJson(response).then(function (payload) {
+          if (!response.ok || !Array.isArray(payload)) return renderListError();
+          renderList(payload);
+        });
+      })
+      .catch(function () { renderListError(); });
+  }
+
+  /* ---- 详情页 ---- */
+  var detailBody = document.getElementById("detail-body");
+
+  function renderDetailMessage(title, desc, iconKey) {
+    detailBody.replaceChildren(emptyBlock(title, desc, iconKey || "missingDate"));
+  }
+
+  function renderDetail(detail) {
+    var fragment = document.createDocumentFragment();
+    var item = (detail && detail.list_item) || {};
+    var members = detail && Array.isArray(detail.members) ? detail.members : [];
+    var sources = detail && Array.isArray(detail.sources) ? detail.sources : [];
+
+    var overview = el("div", "overview");
+    var top = el("div", "ov-top");
+    var head = el("div", null);
+    head.appendChild(el("h1", "ov-title num", dateOf(item.date) + " · " + clearText(item.team_name)));
+    head.appendChild(el("p", "ov-meta num", memberMeta(item)));
+    top.appendChild(head);
+    top.appendChild(badgeNode(item.status));
+    overview.appendChild(top);
+
+    var chips = el("div", "ov-chips segs");
+    for (var s = 0; s < sources.length; s++) {
+      if (s > 0) chips.appendChild(el("span", "sep", "|"));
+      chips.appendChild(chipNode(sources[s]));
+    }
+    overview.appendChild(chips);
+
+    if (sources.length === 0) {
+      var note = el("div", "notice ov-sources-note");
+      note.appendChild(icon("warn"));
+      note.appendChild(document.createTextNode(TEXT.sourcesUnrecordedHint));
+      overview.appendChild(note);
+    }
+    fragment.appendChild(overview);
+
+    var secHead = el("div", "sec-head");
+    secHead.appendChild(el("h2", "sec-title", TEXT.membersTitle));
+    secHead.appendChild(el("span", "sec-ext num", members.length + " 人"));
+    fragment.appendChild(secHead);
+
+    if (members.length === 0) {
+      fragment.appendChild(emptyBlock(TEXT.noMembers, null, "empty"));
+    } else {
+      var grid = el("div", "members");
+      for (var m = 0; m < members.length; m++) grid.appendChild(memberCardNode(members[m] || {}));
+      fragment.appendChild(grid);
+    }
+
+    detailBody.replaceChildren(fragment);
+  }
+
+  function loadDetail(rawDate) {
+    detailBody.replaceChildren();
+    return fetch("/api/reports/" + encodeURIComponent(rawDate), { headers: { Accept: "application/json" } })
+      .then(function (response) {
+        return safeJson(response).then(function (payload) {
+          if (response.ok && payload && typeof payload === "object") return void renderDetail(payload);
+          if (response.status === 404) return void renderDetailMessage(TEXT.noReportForDate, null);
+          if (response.status === 400 && payload && payload.error) {
+            return void renderDetailMessage(String(payload.error), null);
+          }
+          if (response.status === 400) return void renderDetailMessage(TEXT.loadFailed, null);
+          renderDetailMessage(TEXT.noReportForDate, null);
+        });
+      })
+      .catch(function () { renderDetailMessage(TEXT.loadFailed, null); });
+  }
+
+  /* ---- hash 路由：#/report/{date} → 详情，其余 → 列表 ---- */
+  var viewList = document.getElementById("view-list");
+  var viewDetail = document.getElementById("view-detail");
+  var REPORT_PREFIX = "#/report/";
+  var loadedKey = null;
+
+  function currentDate() {
+    var hash = location.hash || "";
+    if (hash.indexOf(REPORT_PREFIX) !== 0) return null;
+    var raw = hash.slice(REPORT_PREFIX.length);
+    try { raw = decodeURIComponent(raw); } catch (err) { /* 保持原样 */ }
+    return raw.length > 0 ? raw : null;
+  }
+
+  function setFocus(activeView) {
+    var target = activeView.querySelector("[data-focus]");
+    if (target && target.focus) target.focus({ preventScroll: true });
+  }
+
+  function renderRoute() {
+    var day = currentDate();
+    var wantDetail = day !== null;
+    // 直接赋值（而不是 "和期望相反才切"）：状态自愈，不依赖初始 hidden 属性。
+    viewList.hidden = wantDetail;
+    viewDetail.hidden = !wantDetail;
+
+    var key = wantDetail ? "detail:" + day : "list";
+    if (key === loadedKey) {
+      window.scrollTo(0, 0);
+      return;
+    }
+    loadedKey = key;
+
+    var pending = wantDetail ? loadDetail(day) : loadList();
+    pending.then(function () {
+      setFocus(wantDetail ? viewDetail : viewList);
+      window.scrollTo(0, 0);
+    });
+  }
+
+  document.title = TEXT.pageTitle;
+  window.addEventListener("hashchange", renderRoute);
+  renderRoute();
+})();
+</script>
+</body>
+</html>

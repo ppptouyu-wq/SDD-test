@@ -21,11 +21,20 @@
 │  formatter / template                     │   └──────────────────────────────┘
 └──────────────────────────────────────────┘
                     │ 日报(Markdown / HTML)
-                    ▼
-        ┌──────────────────────────────────────────┐
-        │  推送层 Notifier                          │
-        │  email(SMTP) / lark_bot(webhook)          │──▶ 团队 Leader 邮箱 + 飞书群
-        └──────────────────────────────────────────┘
+                    ├────────────────────────────┐
+                    ▼                            ▼
+        ┌──────────────────────────┐   ┌──────────────────────────────┐
+        │  推送层 Notifier          │   │  展示层 Web（v1.2 新增）      │
+        │  email / lark_bot         │   │  只读 HTTP 服务 + 静态页面    │
+        └──────────────────────────┘   └──────────────────────────────┘
+                    │                            │
+                    ▼                            ▼
+        团队 Leader 邮箱 + 飞书群        浏览器 http://127.0.0.1:<port>
+                                                 ▲
+                                                 │ 只读
+                                        ┌──────────────────┐
+                                        │ data/reports.db  │
+                                        └──────────────────┘
 
   共享基础层 shared/：配置管理 | 日志 | 错误处理 | 数据存储(SQLite)
 ```
@@ -34,6 +43,8 @@
 - 不采用微服务：`proposal.md` 已界定"不需要常驻服务"及 5 人团队规模，引入微服务只会徒增复杂性。
 - 不采用事件驱动：数据流呈清晰的线性、同步特征，不存在复杂的事件分发与异步解耦需求。
 - 黄金法则：选择能满足需求的最简架构（"一切应尽可能简单，但不能过于简单"）。
+- v1.2 展示层不是"第四个管道阶段"，而是挂在存储层之上的一条**只读旁路**：
+  它不接采集、不触发生成、不写库（见 §6.5）。
 
 ## 2. 模块职责
 
@@ -43,6 +54,7 @@
 | `generator/`<br>`formatter.py`<br>`template.py` | 将原始数据组织为日报：数据整理 + Markdown 生成；日报模板管理 | 不做数据采集；不做 API 调用；不做推送 |
 | `notifier/`<br>`email.py`<br>`lark_bot.py` | 将日报推送给目标：SMTP 邮件发送；飞书机器人消息推送 | 不做数据处理；不做日报生成；不做数据采集 |
 | `shared/`<br>`config.py`<br>`logger.py`<br>`errors.py`<br>`storage.py` | 跨模块的共享能力：配置读取和校验；统一日志格式；自定义异常 + 错误处理策略；SQLite 存储（日报历史） | — |
+| `webview/`（v1.2 新增）<br>`app.py`<br>`views.py`<br>`static/` | 只读展示日报：把存储层的日报记录转换成页面可渲染的视图模型；提供本地只读 HTTP 服务与静态页面 | **不写库**；不做数据采集；不做日报生成；不做推送；不做登录与权限；不做搜索与图表 |
 | `main.py` | 编排入口：按顺序调用三层；处理全局异常，记录执行状态 | — |
 
 > **"不负责"列与 `proposal.md` 的"不做什么"一脉相承**。若缺乏负面约束，AI 倾向于把相关功能
@@ -92,6 +104,7 @@ DailyReport（每日报告）
   generated_at: datetime            # 生成时间
   markdown: str                     # 完整的Markdown格式日报
   html: str                         # 完整的HTML格式日报
+  sources: dict[str, bool]          # 各数据源采集成功/失败（v1.2 新增，键为数据源名）
 ```
 
 ### 3.0 新增数据模型（AttendanceRecord，v1.1 迭代新增）
@@ -129,6 +142,56 @@ members:
     github: "wangwu"
     lark: "wangwu@company.com"
 ```
+
+### 3.2 展示层视图模型（v1.2 迭代新增）
+
+`webview/` 对外传递的**不是**内部领域对象，而是两种视图模型（书第 5 章"接口契约"原则：
+模块边界要靠显式数据形状固定下来）。字段级契约见 `contracts/data-models.md` §3。
+
+```text
+ReportListItem（列表项）
+  date: date              # 日报日期
+  team_name: str          # 团队名称
+  generated_at: datetime  # 生成时间
+  member_count: int       # 成员数（列表页只显示计数，不加载成员明细）
+  status: str             # ok / partial / failed / unknown（由 sources 推导，见下）
+
+ReportDetail（详情）
+  list_item: ReportListItem         # 复用列表项字段
+  members: list[MemberView]         # 每位成员的四段内容
+  sources: list[SourceView]         # 各数据源采集结果
+  generated_at: datetime            # 生成时间
+
+MemberView（成员视图）
+  name: str                          # 成员姓名
+  github_username: str               # GitHub 用户名
+  commits: list[CommitView]          # 代码提交（无记录时为空列表）
+  tasks: list[TaskView]              # 任务进展（无记录时为空列表）
+  messages: list[MessageView]        # 协作沟通（无记录时为空列表）
+  attendance: AttendanceView | None  # 考勤；None 表示"考勤数据暂不可用"
+
+SourceView（数据源视图）
+  name: str         # github / lark_task / lark_msg / lark_attendance
+  success: bool     # 该数据源当日是否采集成功
+  error: str | None # 失败原因；成功时为 None
+```
+
+**`status` 的推导规则（四种状态互斥且可判定）**
+
+| 取值 | 判定条件 | 页面表现 |
+|---|---|---|
+| `ok` | `sources` 非空且全部为 `true` | 正常展示，无告警标签 |
+| `partial` | 至少一个 `false`、且至少一个 `true` | 顶部告警条 + 失败数据源标注"数据获取失败" |
+| `failed` | 全部为 `false` | 顶部错误告警条 |
+| `unknown` | `sources` 为空（v1.2 之前的历史记录未记录来源） | 中性徽标"未记录数据源状态"：既不声称成功，也不误报为"全部失败" |
+
+> `unknown` 的由来：初版推导规则把"`sources` 为空"并入 `failed`，结果是 v1.2 之前生成的历史日报
+> 会被标注成"数据源全部失败"——而那天可能四个数据源全部成功，只是当时没有记录来源。
+> **把"没记录"说成"全部失败"是撒谎**，故按图 7-8"规范缺陷 → 回溯更新规范"拆出第四态（见 ADR-004 补充记录）。
+>
+> 与 `proposal.md` §3.1 验收标准的对应：`partial`/`failed` 即"采集失败的数据源必须显式标注"
+> 与"严禁静默跳过"在展示层的落地手段；`attendance=None` 则对应"考勤数据暂不可用"。
+> **"今日无记录"是另一个维度**：它指某成员某板块为空列表，与数据源失败无关，两者不得互相顶替。
 
 ## 4. 接口契约
 
@@ -178,15 +241,33 @@ lark_bot.send(
     report: DailyReport,           # 日报对象
     chat_id: str                   # 目标群ID
 ) -> bool                          # 成功/失败
+
+# 展示层接口（v1.2 新增）
+webview.list_reports(
+    storage: ReportStorage,        # 存储层（只读使用）
+    limit: int = 365               # 最多列出条数
+) -> list[ReportListItem]          # 按日期倒序返回列表项
+
+webview.get_report(
+    storage: ReportStorage,        # 存储层（只读使用）
+    day: date                      # 日报日期
+) -> ReportDetail | None           # 该日详情；无记录返回 None
+
+webview.serve(
+    db_path: str = "data/reports.db",  # 日报数据库路径
+    host: str = "127.0.0.1",           # 只允许本机回环地址
+    port: int = 8000                   # 本机端口
+) -> int                               # 启动只读 HTTP 服务（阻塞）；返回进程退出码 0=正常停止，2=启动失败
 ```
 
-字段级契约见 `specs/contracts/data-models.md`。
+字段级契约见 `specs/contracts/data-models.md`；HTTP 端点契约见 `specs/contracts/api-spec.yaml` 的 `paths`。
 
 ## 5. 技术选型（ADR）
 
 - ADR-001：HTTP 客户端 → httpx
 - ADR-002：数据存储 → SQLite
 - ADR-003：采集层返回 `CollectResult`（v1.1 由逆向回溯新增，见 `adrs/003-采集层返回CollectResult.md`）
+- ADR-004：展示层技术栈与设计系统来源（v1.2 需求变更新增，见 `adrs/004-展示层技术选型.md`）
 
 ### 5.1 飞书考勤接口的请求格式（实测校准，2026-09）
 
@@ -284,3 +365,48 @@ lark_bot.send(
   （对应 `tasks.md` 中"使用 Mock 数据的单元测试全部通过"的验收标准）。
 - `python main.py --mock` 使用内置演示数据跑通全链路，用于无凭据环境下的端到端验证。
 - `main.py --check` 执行健康检查，`main.py --date YYYY-MM-DD` 指定日报日期。
+
+### 6.5 展示层约束（v1.2 需求变更新增）
+
+**(1) 只读**：展示层对 `data/reports.db` 只做查询，不得出现任何写操作（不新增表、
+不更新字段、不删除记录）；也不得触发生成或推送流程。违反此约束即超出 `proposal.md` §2.2。
+
+**(2) 只监听回环地址**：服务必须绑定 `127.0.0.1`，禁止绑定 `0.0.0.0`；
+不实现登录与权限，安全性由"只在本机可用"保证（`proposal.md` 技术约束）。
+
+**(3) 运行时依赖为零新增**：展示层必须用 Python 标准库（`http.server` / `sqlite3` /
+`json`）与静态 HTML/CSS 实现，不得引入 Web 框架、不得要求构建步骤（ADR-004）。
+理由是 `proposal.md` 技术约束要求"复用团队现有技术栈"，而 Cron 定时链路
+（采集→生成→推送）的依赖集合不应被展示页扩大。
+
+**(4) 视觉同源（设计令牌）**：本复现的展示层视觉不是临时配色，而是采用
+OpenDesign 的 `ant` 设计系统（企业级、数据密集）的令牌值，机器可读原件为
+`design-tokens.json`（56 个令牌，`format: od-design-tokens/v1`）。
+落地时按**语义**取用，即"令牌引用语义，而非语义迁就令牌"：
+
+| 页面语义 | 令牌 | 取值 | 说明 |
+|---|---|---|---|
+| 页面背景 | `--bg` | `#ffffff` | 白色工作台面 |
+| 分组底板 | `--surface` | `#f7f8fa` | 卡片/表头底色 |
+| 正文文字 | `--fg` | `#1f1f1f` | 主文本 |
+| 次级文字 | `--fg-2` | `#4b5563` | 说明、时间戳 |
+| 弱化文字 | `--muted` | `#697386` | 辅助信息 |
+| 分隔线 | `--border` / `--border-soft` | `#d9dce3` / `#eef0f4` | 边框与浅分隔 |
+| 强调色（品牌） | `--accent` | `#d32029` | 仅用于标题重音与焦点环 |
+| 成功（数据源正常） | `--success` | `#22a06b` | 状态标记 |
+| 警告（部分数据源失败） | `--warn` | `#faad14` | `partial` 告警 |
+| 危险（全部失败/错误） | `--danger` | `#cf1322` | `failed` 告警 |
+| 中性（未记录数据源状态） | `--muted` + `--border` | `#697386` / `#d9dce3` | `unknown` 徽标：无彩色，不参与告警色阶 |
+| 圆角 | `--radius-sm` / `--radius-md` | `6px` / `10px` | 卡片与按钮 |
+| 字号阶梯 | `--text-xs`…`--text-2xl` | `12/14/16/18/22/32px` | 见令牌原文 |
+| 间距阶梯 | `--space-1`…`--space-8` | `4/8/12/16/20/24/32px` | 8px 基准 |
+| 正文字号 | `--text-base` | `16px` | 日报正文 |
+
+> **`--accent` 是红色（`#d32029`），这是该设计系统的身份色，不是错误色。**
+> 页面上"错误"必须使用 `--danger`（`#cf1322`），不得与 `--accent` 混用 ——
+> 该设计系统同时包含 `--accent` 与 `--danger` 两个令牌，混用会让"品牌重音"与"故障告警"
+> 在视觉上无法区分。
+>
+> **来源口径（已实测核对，见 ADR-004）**：同一设计系统目录下的 `DESIGN.md` 文本
+> 给出的是通用占位色（`#1677FF` 等）并与令牌文件冲突；以**机器可读的
+> `design-tokens.json`（`layer: A1-identity`，`sourceBackedTokens: 56`）为准**。

@@ -68,17 +68,77 @@
 | generated_at | datetime | 生成时间 |
 | markdown | str | 完整的 Markdown 格式日报 |
 | html | str | 完整的 HTML 格式日报 |
+| sources | dict[str, bool] | 各数据源当日采集成功/失败（v1.2 新增），键为数据源名（`github`/`lark_task`/`lark_msg`/`lark_attendance`），值为是否成功。展示层据此推导 status；**v1.2 之前的历史记录可能为空字典** |
 
-## 3. 聚合关系
+> `sources` 是"采集失败必须显式标注"（`proposal.md` §3.1）在数据模型上的落点：
+> 只有把每个数据源的成败随日报一起持久化，展示层才能对失败数据源标注"数据获取失败"，
+> 并把它与"当日确实没有数据"区分开。该字段同时在 `api-spec.yaml` 的 `DailyReport` 中声明，两处不得矛盾。
+
+## 3. 展示层视图模型（v1.2 迭代新增）
+
+展示层不直接把 `DailyReport` 交给页面，而是先转换成视图模型
+（`design.md` §3.2）：一是把"数据源成败"翻译成页面可直接渲染的四态，
+二是把日期等字段规范化，三是**明确标出哪些缺失是可解释的、哪些是异常的**。
+
+### ReportListItem（日报列表项）
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| date | date | 是 | 日报日期 |
+| team_name | str | 是 | 团队名称 |
+| generated_at | datetime | 是 | 生成时间 |
+| member_count | int | 是 | 成员数（≥0） |
+| status | str | 是 | **枚举：ok / partial / failed / unknown**，由 `sources` 推导 |
+
+`status` 推导规则（唯一定义处，页面与测试均以此为准）：
+
+| 条件 | status | 页面表现 |
+|---|---|---|
+| `sources` 非空且全部为 `True` | `ok` | 正常态 |
+| 至少一个 `False` 且至少一个 `True` | `partial` | 标注"数据获取失败"的数据源名 |
+| 全部为 `False` | `failed` | 显著告警：当日日报数据源全部失败 |
+| `sources` 为空（v1.2 之前的历史记录未记录来源） | `unknown` | 中性标注"未记录数据源状态"；**不得**升格为 `failed` |
+
+### SourceView（数据源结果视图）
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| name | str | 是 | 数据源名 |
+| success | bool | 是 | 是否采集成功 |
+| error | str \| None | 否 | 失败原因；成功时为 None |
+
+### MemberView / AttendanceView / CommitView / TaskView / MessageView
+成员视图按 `design.md` §3.2 定义，与 `MemberReport` 的差别是：
+`attendance` 为 `AttendanceView | None`，`None` 在页面上的语义是**"考勤数据暂不可用"**，
+而不是"该成员今天没有考勤"。
+
+### ReportDetail（日报详情）
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| list_item | ReportListItem | 是 | 列表项（复用状态推导结果） |
+| members | list[MemberView] | 是 | 各成员视图 |
+| sources | list[SourceView] | 是 | 各数据源结果 |
+| generated_at | datetime | 是 | 生成时间 |
+
+> **三种异常状态不得互相顶替**（`proposal.md` §3.1 v1.2）：
+> 1. **数据源采集失败** → `status` 为 `partial`/`failed`（**不含 `unknown`**），页面标注"数据获取失败"；
+> 2. **考勤数据不可用** → `MemberView.attendance is None`，页面显示"考勤数据暂不可用"；
+> 3. **当日确实没有数据** → 对应板块为空列表，页面显示"今日无记录"。
+>
+> 三者是三个独立维度（数据源维度、字段维度、记录维度），页面必须分别呈现。
+>
+> **`unknown` 不在这三者之内**：它描述的是"这条日报在生成时没有记录数据源状态"（`sources` 为空），
+> 属于**元数据缺失**，既不是采集失败、也不是"当天没有数据"，因此不参与告警色阶，用中性色呈现。
+
+## 4. 聚合关系
 
 ```
 DailyReport ──1:N──▶ MemberReport ──1:N──▶ CommitRecord
                                   ├─1:N──▶ TaskRecord
                                   ├─1:N──▶ MessageRecord
                                   └─1:1──▶ AttendanceRecord (v1.1)
+DailyReport.sources ──1:N──▶ SourceView (v1.2，仅展示层)
 ```
 
-## 4. 采集层统一返回类型（ADR-003）
+## 5. 采集层统一返回类型（ADR-003）
 
 v1.0 的 `collect()` 返回 `list[Record]`，无法区分"今日确实没有数据"与"API 调用失败"。
 v1.1 按 `proposal.md` § 3.2"采集失败必须显式标注、严禁静默跳过"的要求改为：
@@ -90,7 +150,7 @@ CollectResult[T]:
   error_message: str | None  # 失败原因（成功时为 None）
 ```
 
-## 5. 成员身份映射（config.yaml 片段）
+## 6. 成员身份映射（config.yaml 片段）
 
 ```yaml
 members:

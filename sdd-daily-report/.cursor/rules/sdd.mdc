@@ -28,6 +28,7 @@ alwaysApply: true
 5. **同时生成实现与测试**：验收标准（`- [ ]` 清单）要逐条转成测试用例。
 6. **禁止硬编码密钥**：一律通过环境变量注入（`GITHUB_TOKEN`、`LARK_APP_ID`、`LARK_APP_SECRET`、`SMTP_PASSWORD`）。
 7. **保持模块边界**：`collector/` 不做格式化，`generator/` 不做采集与推送，`notifier/` 不做数据处理。
+8. **不突破展示层边界**（v1.2）：`webview/` 必须零新增运行时依赖（只用标准库）、只监听回环地址、只读；不得引入 Web 框架、不得实现登录与权限（`specs/design.md` § 6.5）。
 
 ## 目录结构
 ```
@@ -42,6 +43,7 @@ sdd-daily-report/
 ├── generator/        # 生成层：formatter / template
 ├── notifier/         # 推送层：email / lark_bot
 ├── shared/           # 共享层：config / logger / errors / storage / retry / calendar / models
+├── webview/          # 展示层（v1.2）：views（纯逻辑）/ app（HTTP 薄壳）/ static（原生 HTML+CSS）
 ├── tests/            # 单元测试 + 集成测试
 └── main.py           # 编排入口
 ```

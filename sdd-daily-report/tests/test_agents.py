@@ -222,8 +222,8 @@ def test_orchestrator_with_fake_worker_runs_in_wave_order():
 
     assert all(r.ok for r in results)
     # 每个任务都被委派一次（Task 11 依赖 Task 2，因此不在 Task 10 之后，而在第 2 波）
-    assert len(worker.calls) == len(tasks) == 11
-    assert set(worker.calls) == {f"Task{i}" for i in range(1, 12)}
+    assert len(worker.calls) == len(tasks) == 12
+    assert set(worker.calls) == {f"Task{i}" for i in range(1, 13)}
     # 依赖顺序：Task1 必须在 Task2 之前（依赖顺序）
     assert worker.calls.index("Task1") < worker.calls.index("Task2")
     # 委派顺序必须尊重每一波的依赖：任一任务都不得早于它的依赖出现

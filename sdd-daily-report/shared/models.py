@@ -79,6 +79,10 @@ class DailyReport:
     generated_at: datetime  # 生成时间
     markdown: str  # 完整的Markdown格式日报
     html: str  # 完整的HTML格式日报
+    # 各数据源当日是否采集成功（v1.2 新增，键为数据源名如 github/lark_task/lark_msg/lark_attendance）。
+    # 展示层据此推导日报状态（design.md §3.2）；默认空字典保证既有构造调用不受影响，
+    # 而"空"在展示层被判定为 unknown（未记录数据源状态），不会被误报成"全部失败"。
+    sources: dict[str, bool] = field(default_factory=dict)
 
 
 T = TypeVar("T")

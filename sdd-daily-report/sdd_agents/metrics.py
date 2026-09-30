@@ -156,6 +156,25 @@ _KEYWORD_MAP: list[tuple[str, tuple[str, ...]]] = [
     ("日志", ("log", "logger", "json")),
     ("自动刷新", ("refresh", "token")),
     ("自动跳过", ("skip", "weekend", "holiday")),
+    # ---- v1.2 展示层词条（让 Task 12 / proposal.md §3.1·§3.3 的措辞能对上测试命名）----
+    ("回环", ("loopback", "127.0.0.1", "host")),
+    ("绑定", ("loopback", "bind", "host", "serve")),
+    ("主机", ("loopback", "host", "serve_rejects")),
+    ("只读", ("readonly", "read_only", "reject_write", "no_write")),
+    ("写操作", ("write", "post", "put", "delete", "patch", "405")),
+    ("展示页", ("webview", "serve", "display", "page")),
+    ("展示层", ("webview", "views", "serve", "display")),
+    ("标准库", ("stdlib", "framework", "build_step", "dependency")),
+    ("依赖", ("dependency", "stdlib", "framework", "no_dependency")),
+    ("框架", ("framework", "flask", "fastapi")),
+    ("构建", ("build_step", "webpack", "vite", "framework")),
+    ("令牌", ("token", "design_token", "css")),
+    ("空态", ("empty", "empty_state", "empty_db", "no_report")),
+    ("白屏", ("empty", "empty_state", "fatal", "no_report")),
+    ("首页", ("index", "list", "empty_state", "render")),
+    ("倒序", ("descending", "order", "sort", "date_desc")),
+    ("未记录", ("unknown", "unrecorded", "sources_empty", "status")),
+    ("导出", ("export", "download")),
 ]
 
 

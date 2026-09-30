@@ -104,7 +104,10 @@ def _invoke(script: Path, stdin_text: str) -> GuardOutcome:
 
 
 def default_self_check_cases() -> list[SelfCheckCase]:
-    """护栏必须拦住的四类情况 + 一个正常情况。"""
+    """护栏必须拦住的六类情况 + 两个正常情况。
+
+    前四类是书中的三条规则；后两类来自 v1.2 需求变更带出的展示层边界（design.md §6.5）。
+    """
     return [
         SelfCheckCase(
             name="直接修改 specs/ 规范",
@@ -142,6 +145,37 @@ def default_self_check_cases() -> list[SelfCheckCase]:
                 }
             },
             should_block=True,
+        ),
+        SelfCheckCase(
+            name="展示层引入 Web 框架",
+            payload={
+                "tool_input": {
+                    "file_path": "webview/app.py",
+                    "content": "from flask import Flask\napp = Flask(__name__)",
+                }
+            },
+            should_block=True,
+        ),
+        SelfCheckCase(
+            name="展示层对外暴露（绑定 0.0.0.0）",
+            payload={
+                "tool_input": {
+                    "file_path": "webview/app.py",
+                    "content": 'serve(host="0.0.0.0", port=8000)',
+                }
+            },
+            should_block=True,
+        ),
+        SelfCheckCase(
+            name="正常实现展示层（标准库 + 回环地址）",
+            payload={
+                "tool_input": {
+                    "file_path": "webview/app.py",
+                    "content": "import http.server\n"
+                    'serve(db_path="data/reports.db", host="127.0.0.1", port=8000)',
+                }
+            },
+            should_block=False,
         ),
         SelfCheckCase(
             name="正常实现采集模块",

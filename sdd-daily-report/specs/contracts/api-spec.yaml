@@ -2,7 +2,7 @@ openapi: 3.0.3
 
 info:
   title: 智能日报生成器 — 接口契约（api-spec.yaml）
-  version: 1.1.0
+  version: 1.2.0
   description: |
     本书 SDD 六阶段工作流【阶段三：接口契约】的产物之一（与 data-models.md 配套）。
 
@@ -25,18 +25,76 @@ info:
       - design.md §4    = 接口契约的叙述版（给人与 AI 看的上下文）
 
 # 本项目无可调用的 HTTP 端点：对外入口是 `python main.py`。
-# 保留 paths 以满足 OpenAPI 3.0 结构要求，内容明确标注为不适用。
+# v1.0：日报生成由 Cron 触发 `python main.py` 完成，本项目不是 Web 服务，故 paths 仅占位。
+# v1.2：新增本地只读展示层（Task 12），paths 记录其三个只读端点的契约。
+# 展示层的**模块级**函数契约仍见 `x-module-contracts`。
 paths:
-  /_not-applicable:
+  /:
     get:
-      operationId: notApplicable
-      summary: 本项目不是 Web 服务，无 HTTP 端点
+      operationId: serveIndex
+      summary: 返回展示页首页（静态页面）
       description: |
-        日报生成由 Cron 触发 `python main.py` 完成。此处仅占位以满足 OpenAPI 结构要求。
-        模块级契约见 `x-module-contracts`。
+        返回 `webview/static/index.html`。页面自行调用 `/api/reports` 取数据。
+        仅在本机可用（服务绑定 127.0.0.1，见 design.md §6.5(2)）。
       responses:
-        "501":
-          description: 不适用
+        "200":
+          description: 首页 HTML
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /api/reports:
+    get:
+      operationId: listReports
+      summary: 列出全部已生成日报（按日期倒序）
+      description: |
+        对应 `webview.list_reports()`。只读：不写库、不触发生成与推送。
+        数据库中无记录时返回空数组（HTTP 200），由页面显示空态提示。
+      responses:
+        "200":
+          description: 日报列表项数组
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ReportListItem" }
+
+  /api/reports/{date}:
+    get:
+      operationId: getReport
+      summary: 获取指定日期的日报详情
+      parameters:
+        - name: date
+          in: path
+          required: true
+          schema:
+            type: string
+            format: date
+          description: 日报日期（YYYY-MM-DD）
+      responses:
+        "200":
+          description: 日报详情
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReportDetail" }
+        "404":
+          description: 该日期没有日报记录（页面显示"该日期没有日报记录"，不显示空白页）
+        "400":
+          description: 日期格式非法
+
+  # ---- 以下为显式声明"不可写"：展示层不接受任何写操作 ----
+  /api/reports/{date}/write-not-supported:
+    post:
+      operationId: writeNotSupported
+      summary: 展示层为只读，任何写操作返回 405
+      description: |
+        v1.2 展示层是只读旁路（design.md §6.5(1)、proposal.md §2.2）。
+        此端点用于在契约层显式固定"不可写"这一约束，实现须对 POST/PUT/DELETE/PATCH
+        一律返回 405 且不产生任何数据变更。
+      responses:
+        "405":
+          description: 方法不允许（展示层无任何写接口）
 
 components:
   schemas:
@@ -198,6 +256,162 @@ components:
         html:
           type: string
           description: 完整 HTML 日报，可直接作为邮件正文渲染
+        sources:
+          type: object
+          description: |
+            各数据源当日采集结果（v1.2 新增），键为数据源名、值为是否成功。
+            用于展示层推导 status（ok / partial / failed），对应 proposal.md §3.1
+            "采集失败的数据源必须显式标注"的验收标准。旧记录可能为空对象。
+          additionalProperties:
+            type: boolean
+
+    # ---------- 展示层视图模型（v1.2 新增）----------
+    SourceView:
+      type: object
+      description: 单个数据源的采集结果视图（对应 design.md §3.2）
+      required: [name, success]
+      properties:
+        name:
+          type: string
+          description: 数据源名（github / lark_task / lark_msg / lark_attendance）
+        success:
+          type: boolean
+        error:
+          type: string
+          nullable: true
+          description: 失败原因；成功时为 null
+
+    AttendanceView:
+      type: object
+      description: 考勤视图；缺失时为 null，页面显示"考勤数据暂不可用"
+      required: [work_hours, status]
+      properties:
+        check_in:
+          type: string
+          format: date-time
+          nullable: true
+        check_out:
+          type: string
+          format: date-time
+          nullable: true
+        work_hours:
+          type: number
+          description: 工时（小时）
+        status:
+          type: string
+          description: 正常 / 迟到 / 早退 / 缺勤 / 休假 / 签退缺失
+
+    CommitView:
+      type: object
+      description: 代码提交视图（列表页/详情页展示用）
+      required: [repo, message, additions, deletions, files_changed]
+      properties:
+        repo:
+          type: string
+        message:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        additions:
+          type: integer
+        deletions:
+          type: integer
+        files_changed:
+          type: integer
+
+    TaskView:
+      type: object
+      description: 任务进展视图
+      required: [title, status_from, status_to]
+      properties:
+        title:
+          type: string
+        status_from:
+          type: string
+        status_to:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+
+    MessageView:
+      type: object
+      description: 协作沟通视图（内容已按黑名单过滤敏感关键词）
+      required: [sender, content]
+      properties:
+        sender:
+          type: string
+        content:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        chat_name:
+          type: string
+
+    MemberView:
+      type: object
+      description: 成员视图（对应 design.md §3.2）
+      required: [name, github_username, commits, tasks, messages]
+      properties:
+        name:
+          type: string
+        github_username:
+          type: string
+        commits:
+          type: array
+          items: { $ref: "#/components/schemas/CommitView" }
+        tasks:
+          type: array
+          items: { $ref: "#/components/schemas/TaskView" }
+        messages:
+          type: array
+          items: { $ref: "#/components/schemas/MessageView" }
+        attendance:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/AttendanceView" }]
+
+    ReportListItem:
+      type: object
+      description: 日报列表项（对应 design.md §3.2）
+      required: [date, team_name, generated_at, member_count, status]
+      properties:
+        date:
+          type: string
+          format: date
+        team_name:
+          type: string
+        generated_at:
+          type: string
+          format: date-time
+        member_count:
+          type: integer
+          minimum: 0
+        status:
+          type: string
+          enum: [ok, partial, failed, unknown]
+          description: |
+            由 sources 推导：全为 true → ok；部分 false → partial；全 false → failed；
+            sources 为空（v1.2 之前的历史记录未记录来源）→ unknown。
+            对应 design.md §3.2 的状态推导规则。
+
+    ReportDetail:
+      type: object
+      description: 日报详情（对应 design.md §3.2）
+      required: [list_item, members, sources, generated_at]
+      properties:
+        list_item:
+          $ref: "#/components/schemas/ReportListItem"
+        members:
+          type: array
+          items: { $ref: "#/components/schemas/MemberView" }
+        sources:
+          type: array
+          items: { $ref: "#/components/schemas/SourceView" }
+        generated_at:
+          type: string
+          format: date-time
 
     # ---------- 通用返回类型（ADR-003）----------
     CollectResult:

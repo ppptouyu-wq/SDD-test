@@ -395,6 +395,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="从 JSON 文件读取任务数据（用于飞书 API 不可用时的本地兜底）",
     )
     parser.add_argument("--check", action="store_true", help="健康检查模式")
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        help="启动本地只读展示页（v1.2），在浏览器查看已生成的日报",
+    )
+    parser.add_argument(
+        "--port", type=int, default=None, help="展示页端口（仅与 --serve 同用，默认 8000）"
+    )
+    parser.add_argument(
+        "--db",
+        default=None,
+        help="日报库路径（仅与 --serve 同用，默认读 config.yaml，缺失时用 data/reports.db）",
+    )
     push_group = parser.add_mutually_exclusive_group()
     push_group.add_argument(
         "--push", dest="push", action="store_true", help="执行真实推送（邮件 + 飞书机器人）"
@@ -439,6 +452,11 @@ def main(argv: list[str] | None = None) -> int:
     _force_utf8_console()
     load_dotenv()
     args = build_parser().parse_args(argv)
+    # --serve（v1.2）：只读展示页。**故意放在加载配置之前** ——
+    # 展示页只读 data/reports.db，不应该因为本机没有 config.yaml（仓库只分发 .example
+    # 模板）就起不来。
+    if args.serve:
+        return _serve(args)
     # 未显式指定时：--mock 演练默认不推送，避免误发；正式运行默认推送
     push = (not args.mock) if args.push is None else args.push
     try:
@@ -498,6 +516,32 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"已存入库：{config.storage_path}")
     return 0
+
+
+DEFAULT_STORAGE = Path("data/reports.db")
+
+
+def _serve(args: argparse.Namespace) -> int:
+    """启动本地只读展示页（v1.2，specs/tasks.md Task 12）。
+
+    库路径的优先级：``--db`` > ``config.yaml`` 的 ``storage_path`` > ``data/reports.db``。
+    返回进程退出码，直接透传给调用方（0 = 正常停止，2 = 启动前校验未通过）。
+    """
+    # 局部导入：非 --serve 的执行路径不需要 http.server，避免把展示层的依赖
+    # 带进 Cron 链路（design.md §6.5(3) 零新增依赖）。
+    from webview.app import DEFAULT_HOST, DEFAULT_PORT, serve
+
+    db_path = args.db
+    if not db_path:
+        try:
+            db_path = load_config(args.config).storage_path
+        except DailyReportError as exc:
+            logger.warning(
+                "读取配置失败，展示页回退到默认日报库",
+                extra={"source": "main", "error": str(exc), "db_path": str(DEFAULT_STORAGE)},
+            )
+            db_path = str(DEFAULT_STORAGE)
+    return serve(db_path=db_path, host=DEFAULT_HOST, port=args.port or DEFAULT_PORT)
 
 
 def _force_utf8_console() -> None:

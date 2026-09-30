@@ -210,8 +210,8 @@ def test_governance_report_passed_only_without_errors():
 
 def test_measure_spec_counts_acceptance_items():
     spec = metrics_mod.measure_spec(ROOT / "specs" / "proposal.md")
-    assert spec.acceptance_items == 16  # 功能 9(含 v1.1 两条) + 性能 3 + 边界 4
-    assert spec.out_of_scope_items == 5
+    assert spec.acceptance_items == 28  # 功能 15(含 v1.1 两条 + v1.2 三条) + 性能 5 + 边界 8
+    assert spec.out_of_scope_items == 6
     assert spec.lines > 0
 
 
@@ -243,7 +243,7 @@ def test_measure_project_reports_real_numbers():
     m = metrics_mod.measure_project(ROOT)
 
     assert m.spec_count == 3
-    assert m.adr_count == 3
+    assert m.adr_count == 4  # 001 采集层 / 002 数据存储 / 003 返回类型 / 004 展示层选型（v1.2）
     assert m.test_count > 100
     assert m.code_lines > 1000
     assert m.tests_per_acceptance >= 1.0, "每个验收标准平均应至少对应 1 个测试"

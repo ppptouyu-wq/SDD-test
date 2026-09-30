@@ -24,6 +24,7 @@
 5. **同时生成实现与测试**：验收标准（`- [ ]` 清单）要逐条转成测试用例。
 6. **禁止硬编码密钥**：一律通过环境变量注入（`GITHUB_TOKEN`、`LARK_APP_ID`、`LARK_APP_SECRET`、`SMTP_PASSWORD`）。
 7. **保持模块边界**：`collector/` 不做格式化，`generator/` 不做采集与推送，`notifier/` 不做数据处理。
+8. **不突破展示层边界**（v1.2）：`webview/` 必须零新增运行时依赖（只用标准库）、只监听回环地址、只读；不得引入 Web 框架、不得实现登录与权限（`specs/design.md` § 6.5）。
 
 ## 目录结构
 
@@ -39,17 +40,19 @@ sdd-daily-report/
 ├── generator/        # 生成层：formatter / template
 ├── notifier/         # 推送层：email / lark_bot
 ├── shared/           # 共享层：config / logger / errors / storage / retry / calendar / models
+├── webview/          # 展示层（v1.2）：views（纯逻辑）/ app（HTTP 薄壳）/ static（原生 HTML+CSS）
 ├── tests/            # 单元测试 + 集成测试
 └── main.py           # 编排入口
 ```
 
 ## 当前状态
 
-- 版本：v1.1（在 v1.0 基础上新增飞书考勤采集）
-- 任务进度：Task 1 ~ Task 11 全部完成
+- 版本：v1.2（在 v1.1 基础上新增本地只读展示层，见 `specs/adrs/004-展示层技术选型.md`）
+- 任务进度：Task 1 ~ Task 12 全部完成
 - 测试：`python -m pytest` 全绿
 - 本地演练：`python main.py --config config.yaml --date 2026-08-20 --mock`
 - 健康检查：`python main.py --config config.yaml --check`
+- 展示页：`python main.py --serve`（只读 `data/reports.db`，浏览器打开 http://127.0.0.1:8000/）
 
 ## 常用命令
 
@@ -57,4 +60,5 @@ sdd-daily-report/
 python -m pytest                      # 全量回归测试
 python main.py --mock --date 2026-08-20   # 端到端演示（不推送）
 python main.py --check               # 健康检查
+python main.py --serve               # 启动本地只读展示页（v1.2）
 ```

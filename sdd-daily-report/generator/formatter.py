@@ -130,6 +130,9 @@ def generate(
         generated_at=timestamp,
         markdown=markdown,
         html=html,
+        # v1.2：把各数据源的成败**持久化**进日报。只用于渲染是不够的 ——
+        # 展示层要据此区分"采集失败"与"当时没记录来源"（design.md §3.2 的四态）。
+        sources=dict(sources or {}),
     )
     logger.info(
         "日报生成完成",

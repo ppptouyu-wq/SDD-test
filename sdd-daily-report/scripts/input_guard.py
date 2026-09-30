@@ -1,9 +1,10 @@
 """入护栏：在 AI 修改文件之前拦截越界行为（护栏三明治模式，第 8 章 8.6.3）。
 
-书中的三条规则（图 8-13 input_guard）：
+书中的三条规则（图 8-13 input_guard），加上本复现 v1.2 需求变更带出的第四条：
 1. 禁止修改 specs/ 下的规范文件（规范变更必须由人类确认）
 2. 禁止实现 proposal.md § 2.2 已明确排除的范围
 3. 禁止硬编码密钥（design.md § 6.2 安全约束）
+4. 禁止突破展示层边界（design.md § 6.5，v1.2 需求变更新增）
 
 用法（在 Claude Code Hooks 的 PreToolUse 中调用）：
     工具调用信息从 stdin 传入，本脚本以退出码表达判定：
@@ -35,6 +36,27 @@ SECRET_PATTERNS = [
     (r"sk-[A-Za-z0-9]{20,}", "疑似硬编码 OpenAI 风格密钥"),
 ]
 
+# ---- 规则 4：展示层边界（v1.2 需求变更带出的约束，design.md §6.5）----
+# 注意正则的**故意收窄**，避免误伤仓库里既有的合法代码：
+#   - 登录相关只匹配"建鉴权入口"的写法，不匹配 `def login(self, ...)`（tests/test_email.py
+#     的 SMTP 登录夹具）或 `"permission denied"` 这类普通字符串；
+#   - `0.0.0.0` 要求连续四个 0，因此 `127.0.0.1` 不会命中。
+DISPLAY_LAYER_PATTERNS = [
+    (
+        r"(?:^|\n)\s*(?:from|import)\s+(?:flask|fastapi|django|starlette|bottle|tornado|uvicorn)\b",
+        "design.md §6.5(3) 违反：展示层零新增依赖，不得引入 Web 框架（ADR-004）",
+    ),
+    (
+        r"0\.0\.0\.0",
+        "design.md §6.5(2) 违反：展示层必须绑定 127.0.0.1，禁止对外暴露",
+    ),
+    (
+        r"def\s+(?:require_auth|require_login|require_permission|check_permission)\s*\(|"
+        r"(?:login|signin|sign_in)[_\-]?(?:page|view|handler|form)\b",
+        "proposal.md §2.2 排除：展示层不做登录、账号与权限体系",
+    ),
+]
+
 
 def check(payload: dict) -> list[str]:
     """返回违规原因列表；空列表表示放行。"""
@@ -59,6 +81,11 @@ def check(payload: dict) -> list[str]:
     for pattern, reason in SECRET_PATTERNS:
         if re.search(pattern, content):
             violations.append(f"安全违规：{reason}（请改用环境变量注入）")
+
+    # 规则 4：展示层边界（design.md §6.5）
+    for pattern, reason in DISPLAY_LAYER_PATTERNS:
+        if re.search(pattern, content, flags=re.IGNORECASE):
+            violations.append(f"越界实现：{reason}")
 
     return violations
 

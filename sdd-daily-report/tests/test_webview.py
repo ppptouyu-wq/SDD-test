@@ -15,9 +15,11 @@ from __future__ import annotations
 import http.client
 import json
 import re
+import shutil
 import sqlite3
+import subprocess
 import threading
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -38,6 +40,28 @@ from webview import views
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT / "webview" / "static"
+
+#: node 不是本项目的依赖，只用来在可用时**真实执行**页面里的格式化逻辑
+#: （见 test_static_page_converts_absolute_timestamps_to_the_system_timezone）。
+NODE = shutil.which("node")
+
+#: 交给 node 的探针：把 index.html 的"展示格式化"区块切出来求值，对每个入参打印
+#: ``timeOf<TAB>clockOf``。用 node 而不是在 Python 里复写一遍，是因为 node 与浏览器
+#: 一样读操作系统的时区设置，能真正验证"换算成当前系统时区"这件事。
+_NODE_PROBE = """
+const fs = require("fs");
+const html = fs.readFileSync(process.argv[2], "utf8");
+const start = html.indexOf("/* ---- \u5c55\u793a\u683c\u5f0f\u5316 ---- */");
+const end = html.indexOf("/* ---- \u7ec4\u4ef6\uff1a\u72b6\u6001\u5fbd\u6807 ---- */");
+if (start < 0 || end <= start) { console.error("格式化区块定位失败"); process.exit(2); }
+const TEXT = { dash: "\\u2014", unitFiles: " \\u6587\\u4ef6", unitMembers: " \\u540d\\u6210\\u5458" };
+const build = new Function("TEXT", "WEEKDAYS", html.slice(start, end) +
+  "\\nreturn { timeOf: timeOf, clockOf: clockOf, stampOf: stampOf, memberMeta: memberMeta };");
+const f = build(TEXT, []);
+for (const value of process.argv.slice(3)) {
+  console.log(f.timeOf(value) + "\\t" + f.clockOf(value) + "\\t" + f.stampOf(value));
+}
+"""
 
 #: 四个数据源的**持久化键名**（DailyReport.sources 的键，见 data-models.md）
 ALL_SOURCES = ("github", "lark_task", "lark_msg", "lark_attendance")
@@ -418,23 +442,109 @@ def test_time_fields_reach_the_page_as_full_iso_strings(ro):
     assert member.tasks[0].updated_at == "2026-09-30T18:00:00"
 
 
-def test_static_page_extracts_the_clock_from_an_iso_timestamp():
-    """页面的 ``clockOf()`` 必须能从 ISO 时间串里取出 ``HH:MM``。
+def test_absolute_timestamps_keep_their_offset_on_the_wire(tmp_dir: Path):
+    """带时区偏移的时间必须**原样**送到页面，视图层不负责换算。
 
-    JS 无法在 pytest 里执行，所以这里对静态页做源码级断言：函数体里既要保留
-    ``HH:MM`` 直通分支，也要有从 ISO 中截取时钟的分支。断言的是**行为特征**
-    （一个正则 + 一个 match 调用），不是某一行原文，改动格式不会误伤。
+    回归测试：GitHub 采集器产出的是 ``+00:00``（UTC）、飞书考勤是 ``+08:00``，
+    两者混在同一张卡片上。页面此前靠 ``value.slice(11, 16)`` 取值，于是 UTC 的
+    06:38 被当成本地时间显示，比真实时间早 8 小时。修法是在**页面**里做换算，
+    所以这一侧必须钉住"偏移不许丢"——一旦视图层擅自本地化或去掉偏移，
+    页面再换算一次就会错上两倍偏移。
+    """
+    path = tmp_dir / "aware.db"
+    report = _report(date(2026, 10, 5))
+    member = report.members[0]
+    member.commits[0].timestamp = datetime(2026, 10, 5, 6, 38, 17, tzinfo=timezone.utc)
+    assert member.attendance is not None
+    member.attendance.check_in = datetime(2026, 4, 24, 9, 32, tzinfo=timezone(timedelta(hours=8)))
+
+    with ReportStorage(path) as store:
+        store.save(report)
+    with ReportStorage(path, readonly=True) as store:
+        detail = views.get_report(store, date(2026, 10, 5))
+
+    assert detail is not None
+    read = detail.members[0]
+    assert read.commits[0].timestamp == "2026-10-05T06:38:17+00:00"
+    assert read.attendance is not None
+    assert read.attendance.check_in == "2026-04-24T09:32:00+08:00"
+
+
+def test_static_page_timezone_normalization_is_wired_into_every_clock():
+    """页面的时间一律经统一的换算函数渲染，不得再靠字符串截取。
+
+    回归测试：``timeOf()`` 原先是 ``value.slice(11, 16)``，对 GitHub 的 UTC 串
+    （``2026-10-05T06:38:17+00:00``）会显示成 ``06:38``，而同一张卡片上的考勤
+    是 ``+08:00``（显示正确）——同一份日报里时间自相矛盾。
     """
     html = _static("index.html")
-    match = re.search(r"function\s+clockOf\s*\(value\)\s*\{(.*?)\n  \}", html, re.DOTALL)
-    assert match is not None, "index.html 里找不到 clockOf()"
 
-    body = match.group(1)
-    assert r"/^\d{2}:\d{2}$/" in body, "clockOf 丢了 HH:MM 直通分支"
-    assert re.search(r"\.match\(\s*/\[T \]\(\\d\{2\}:\\d\{2\}\)/\s*\)", body) is not None, (
-        "clockOf 缺少从 ISO 时间串（含 'T' 或空格分隔符）截取 HH:MM 的分支，"
-        "会把 2026-09-30T09:02:00 原样显示出来"
+    for name in ("offsetMinutes", "stampParts", "stampOf", "pad2"):
+        assert re.search(r"function\s+%s\s*\(" % name, html), f"index.html 缺少 {name}()"
+    assert "Date.UTC(" in html, "缺少绝对时刻运算（Date.UTC），无法按偏移换算"
+    assert "(Z|[+-]" in html, "STAMP 正则没有识别时区偏移（Z / ±HH:MM）"
+
+    assert "value.slice(11, 16)" not in html, "timeOf 又退回了「截掉日期时区」的旧写法"
+
+    body = re.search(r"function\s+timeOf\s*\(value\)\s*\{(.*?)\n  \}", html, re.DOTALL)
+    assert body is not None, "index.html 里找不到 timeOf()"
+    assert "stampParts(value)" in body.group(1), "timeOf() 没有走统一换算"
+
+    clock = re.search(r"function\s+clockOf\s*\(value\)\s*\{(.*?)\n  \}", html, re.DOTALL)
+    assert clock is not None, "index.html 里找不到 clockOf()"
+    assert "return timeOf(value);" in clock.group(1), (
+        "clockOf() 没有复用 timeOf() —— 考勤会与其它时间字段用两套口径"
     )
+
+    # 列表行与详情总览共用 memberMeta：只给 HH:MM 会让人误以为是当天凌晨
+    meta = re.search(r"function\s+memberMeta\s*\(item\)\s*\{(.*?)\n  \}", html, re.DOTALL)
+    assert meta is not None, "index.html 里找不到 memberMeta()"
+    assert "stampOf(" in meta.group(1), "生成时间没有走带日期的 stampOf()"
+
+
+@pytest.mark.skipif(NODE is None, reason="需要 node 才能真实执行页面里的格式化逻辑")
+def test_static_page_converts_absolute_timestamps_to_the_system_timezone(tmp_dir: Path):
+    """真实跑一遍页面逻辑：带偏移的时间换算成**本机时区**，不带偏移的按本地墙上时间原样显示。
+
+    Python 的 ``astimezone()`` 和 node 读的是同一套操作系统时区设置，所以期望值在
+    任何时区的机器上都成立 —— 测试不写死 ``+08:00``。
+    """
+    probe = tmp_dir / "probe.js"
+    probe.write_text(_NODE_PROBE, encoding="utf-8")
+
+    absolute = [
+        "2026-10-05T06:38:17+00:00",   # GitHub 提交（真实库里那条，曾显示成 06:38）
+        "2026-10-05T06:38:17Z",        # 同上的 Z 写法
+        "2026-04-24T09:32:00+08:00",   # 飞书考勤（本来就对，不能改坏）
+        "2026-10-05T06:38:17-05:00",   # 负偏移
+    ]
+    wall = ["2026-10-05T14:40:49.683196", "2026-09-30T10:00:00"]  # generated_at 等本地墙上时间
+    samples = absolute + wall
+
+    result = subprocess.run(
+        [NODE, str(probe), str(STATIC_DIR / "index.html"), *samples],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, f"node 探针失败：{result.stderr}"
+
+    lines = result.stdout.strip().splitlines()
+    assert len(lines) == len(samples), f"探针输出行数不对：{result.stdout!r}"
+
+    for value, line in zip(samples, lines):
+        shown, clocked, stamped = line.split("\t")
+        if value in absolute:
+            local = datetime.fromisoformat(value).astimezone()
+            want = local.strftime("%H:%M")
+            assert shown == want, f"timeOf({value}) 应为本机时间 {want}，实际 {shown}"
+            assert clocked == want, f"clockOf({value}) 应为本机时间 {want}，实际 {clocked}"
+            want_stamp = local.strftime("%Y-%m-%d %H:%M")
+        else:
+            want = value[11:16]
+            assert shown == want, f"不带偏移的 {value} 是本地墙上时间，应原样显示 {want}，实际 {shown}"
+            want_stamp = value[:10] + " " + want
+        assert stamped == want_stamp, f"stampOf({value}) 应为 {want_stamp}，实际 {stamped}"
 
 
 def test_static_page_does_not_steal_focus_on_first_paint():

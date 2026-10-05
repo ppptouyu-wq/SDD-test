@@ -100,17 +100,22 @@ python main.py --serve --db 其他库.db  # 换日报库
 `未记录数据源状态`。最后一类专指 **v1.2 之前生成的老日报**——它们没有记录数据源成败，
 "没记录"不等于"全部失败"，所以单独成一态，不混进告警色阶。
 
+页面上的时间统一按**你这台机器所在时区**渲染：采集自 GitHub / 飞书的时间带明确偏移
+（如 `2026-10-05T06:38:17+00:00`，UTC），页面换算成本地时间再显示；本地产出的
+`generated_at` 本来就是本地时间，原样显示。列表行与详情头部的生成时间精确到分钟
+（`2026-10-05 14:40`），因此同一张卡片上的时间不会互相矛盾。
+
 ---
 
 ## 子项目
 
 | 目录 | 内容 | 测试 |
 |---|---|---|
-| `sdd-daily-report/` | **主项目**「智能日报生成器」（第 4-7 章）。含 Agent 设计模式、团队实践与度量、适用性自评、Harness 审计、本地只读展示页（v1.2 迭代） | 331 通过 |
+| `sdd-daily-report/` | **主项目**「智能日报生成器」（第 4-7 章）。含 Agent 设计模式、团队实践与度量、适用性自评、Harness 审计、本地只读展示页（v1.2 迭代） | 340 通过 |
 | `kb-search/` | **案例项目**「知识库语义搜索工具」（第 1-2 章） | 109 通过、1 跳过 |
 | `brownfield-demo/` | **Brownfield 四步法**演示（第 7.4 节） | 50 通过 |
 
-合计 **490 个测试**。一键运行：
+合计 **499 个测试**。一键运行：
 
 ```bash
 python run_all_tests.py     # 需先安装 pytest
@@ -282,14 +287,14 @@ python -m pytest tests/ -v
 | `tests/test_generator.py`（含新考勤逻辑） | ✅ | 14 |
 | `tests/test_email.py` | ✅ | 7 |
 | `tests/test_lark_bot.py` | ✅ | 8 |
-| `tests/test_main.py` | ✅ | 14 |
+| `tests/test_main.py` | ✅ | 17 |
 | `tests/test_integration.py` | ✅ | 10 |
 
 除书列的 9 个之外，本复现为第 8~10 章的 Agent 设计模式与治理层另建了
 10 个测试文件（`test_agents.py` 26、`test_team_practice.py` 32、`test_contracts.py` 30、
 `test_framework.py` 21、`test_suitability.py` 20、`test_tool_configs.py` 20、
 `test_harness.py` 16、`test_shared.py` 18、`test_dockerfile.py` 7），
-以及 v1.2 迭代新增的 `test_webview.py` 44。
+以及 v1.2 迭代新增的 `test_webview.py` 50。
 
 三点如实说明：
 

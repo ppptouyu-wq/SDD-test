@@ -124,7 +124,9 @@ svg{display:block}
 .ov-meta{margin-top:6px;font-size:var(--fs-14);color:var(--c-text-3)}
 .ov-chips{display:flex;flex-wrap:wrap;gap:var(--sp-8)}
 .ov-sources-note{margin-top:var(--sp-12)}
-.segs{display:flex;flex-direction:column;gap:var(--sp-8);margin-top:var(--sp-12)}
+/* 数据源徽标横排。这里原先是 flex-direction:column —— 每个徽标被拉成整行宽，
+   夹在中间的 "|" 分隔符也独占一行，看起来像一排空框加一个斜杠。 */
+.segs{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-8);margin-top:var(--sp-12)}
 .segs > .sep:first-child{display:none}
 .ic svg{display:block}
 

@@ -145,9 +145,71 @@
   }
 
   /* ---- 展示格式化 ---- */
+
+  /* 线上时间字段都是完整的 ISO 8601，但"带不带时区偏移"并不统一：
+       · 采集自外部接口的（代码提交 / 任务 / 消息，以及考勤的签到签退）带明确偏移，
+         如 2026-10-05T06:38:17+00:00 —— 它是**绝对时刻**，GitHub 给的就是 UTC；
+       · generated_at 是本地墙上时间，不带偏移。
+     两者混在同一张卡片上时，若原样截字符串，就会出现"提交是早上 6 点、考勤是上午
+     9 点"这种差 8 小时的怪象（同一条日报的 report_date 用的是东八区口径）。
+     所以统一在这里换算：带偏移的按**浏览器所在时区**渲染 —— 浏览器时区就是当前系统
+     时区，换台机器看会自动跟着走，页面显示也因此始终自洽；不带偏移的已经是本地时间，
+     原样取用，不做二次换算。字段本身仍是完整 ISO（见 data-models.md 的约定），
+     这里只做渲染期格式化。 */
+  var STAMP = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?\s*(Z|[+-]\d{2}:?\d{2})?$/;
+
+  function offsetMinutes(zone) {
+    if (zone === "Z") return 0;
+    var sign = zone.charAt(0) === "-" ? -1 : 1;
+    var body = zone.slice(1).replace(":", "");
+    return sign * (Number(body.slice(0, 2)) * 60 + Number(body.slice(2, 4)));
+  }
+
+  function pad2(value) {
+    return (value < 10 ? "0" : "") + value;
+  }
+
+  /* 把 ISO 串拆成 {year,month,day,hour,minute}。带偏移的换算到浏览器时区，
+     不带偏移的按字面量返回。解析不了返回 null。 */
+  function stampParts(value) {
+    if (typeof value !== "string") return null;
+    var matched = STAMP.exec(value.trim());
+    if (!matched) return null;
+    var year = Number(matched[1]);
+    var month = Number(matched[2]);
+    var day = Number(matched[3]);
+    var hour = Number(matched[4]);
+    var minute = Number(matched[5]);
+    var zone = matched[7];
+    if (!zone) {
+      return { year: year, month: month, day: day, hour: hour, minute: minute };
+    }
+    var second = Number(matched[6] || 0);
+    var utc = Date.UTC(year, month - 1, day, hour, minute, second) - offsetMinutes(zone) * 60000;
+    var local = new Date(utc);
+    if (isNaN(local.getTime())) return null;
+    return {
+      year: local.getFullYear(),
+      month: local.getMonth() + 1,
+      day: local.getDate(),
+      hour: local.getHours(),
+      minute: local.getMinutes()
+    };
+  }
+
   function timeOf(value) {
-    if (typeof value !== "string" || value.length < 16) return TEXT.dash;
-    return value.slice(11, 16);
+    var parts = stampParts(value);
+    if (!parts) return TEXT.dash;
+    return pad2(parts.hour) + ":" + pad2(parts.minute);
+  }
+
+  /* 列表行与详情总览问的是"哪天几点生成的"：只给 00:49 会让人误以为是当天凌晨，
+     所以这两处带上日期。 */
+  function stampOf(value) {
+    var parts = stampParts(value);
+    if (!parts) return TEXT.dash;
+    return parts.year + "-" + pad2(parts.month) + "-" + pad2(parts.day) +
+      " " + pad2(parts.hour) + ":" + pad2(parts.minute);
   }
 
   function dateOf(value) {
@@ -168,14 +230,13 @@
     return WEEKDAYS[day.getDay()];
   }
 
+  /* 考勤的签到签退与其它时间字段走完全相同的换算（历史上这里单独写了一套"只取前
+     5 个字符"的逻辑，碰到完整 ISO 会把整串原样吐到页面上，才会出现
+     "2026-04-24T09:32:00+08:00" 这种显示）。短格式 "09:32" 原样放行。 */
   function clockOf(value) {
-    if (typeof value !== "string" || value.length < 5) return TEXT.dash;
-    // 后端（shared.storage -> AttendanceRecord）序列化出来的是完整 ISO 时间
-    // （2026-04-24T09:32:00+08:00），这里只取时钟部分；已经是 "09:32" 的原样返回。
-    var head = value.slice(0, 5);
-    if (/^\d{2}:\d{2}$/.test(head)) return head;
-    var matched = value.match(/[T ](\d{2}:\d{2})/);
-    return matched ? matched[1] : value;
+    var short = /^(\d{2}):(\d{2})$/.exec(typeof value === "string" ? value.trim() : "");
+    if (short) return short[1] + ":" + short[2];
+    return timeOf(value);
   }
 
   function fileCount(value) {
@@ -187,7 +248,7 @@
   function memberMeta(item) {
     var count = Number(item && item.member_count);
     if (!isFinite(count) || count < 0) count = 0;
-    return String(count) + TEXT.unitMembers + timeOf(item && item.generated_at);
+    return String(count) + TEXT.unitMembers + stampOf(item && item.generated_at);
   }
 
   /* ---- 组件：状态徽标 ---- */

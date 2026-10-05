@@ -61,7 +61,7 @@
    | ② 真实 GitHub 仓库（2026-04-24，不推送） | 拉真实提交 |
    | ③ 健康检查（--check） | 逐项检查配置 |
    | ④ 今天（真实推送，慎用） | 会真的发邮件/推飞书 |
-   | ⑤ 跑全部测试（pytest） | 331 个用例 |
+   | ⑤ 跑全部测试（pytest） | 340 个用例 |
    | ⑥ 只跑当前打开的测试文件 | 调试单个用例 |
    | ⑦ 展示页：本地只读查看已生成的日报 | 起本地网页看日报（v1.2 新增） |
 
@@ -297,6 +297,12 @@ python main.py --serve --db other.db  # 换日报库
 页面区分**四种**状态：`数据源正常` / `部分数据源失败` / `数据源全部失败` /
 `未记录数据源状态`。最后一类专指 v1.2 之前生成的老日报。
 
+时间一律按**浏览器所在时区**（即本机时区）渲染：采集层的绝对时刻带明确偏移
+（GitHub 是 `+00:00`、飞书考勤是 `+08:00`），页面统一换算后显示；`generated_at`
+是本地墙上时间，原样显示。换算只发生在页面（`index.html` 的 `stampParts()` 一带），
+采集层与视图层都保留完整 ISO 偏移不动 —— 视图层若擅自本地化，页面再换算一次就会
+错上两倍偏移。
+
 代码分层：`webview/views.py`（纯逻辑，可脱离 HTTP 单测）、
 `webview/app.py`（HTTP 薄壳，只做请求→视图→响应的翻译）、
 `webview/static/`（`index.html` + `app.css`，原生单页，两级：#/ 列表、#/report/<日期> 详情）。
@@ -314,13 +320,13 @@ python main.py --serve --db other.db  # 换日报库
 | `tests/test_generator.py` | 14 | 日报生成（含 v1.1 考勤逻辑与布局顺序） |
 | `tests/test_email.py` | 7 | SMTP 推送 |
 | `tests/test_lark_bot.py` | 8 | 飞书机器人推送 |
-| `tests/test_main.py` | 14 | `main.py` 入口：编排、`load_dotenv`、`load_tasks_file`、CLI 退出码 |
+| `tests/test_main.py` | 17 | `main.py` 入口：编排、`load_dotenv`、`load_tasks_file`、CLI 退出码、路径锚定 |
 | `tests/test_integration.py` | 10 | 端到端集成：全链路、单源失败不阻塞、非工作日跳过 |
 
 另有 10 个测试文件覆盖第 8~10 章的 Agent 设计模式与治理层（书里未规定文件清单）：
 `test_agents.py`、`test_team_practice.py`、`test_contracts.py`、`test_framework.py`、
 `test_suitability.py`、`test_tool_configs.py`、`test_harness.py`、`test_shared.py`、
-`test_dockerfile.py`，以及 v1.2 新增的 `test_webview.py`（44 个用例）。
+`test_dockerfile.py`，以及 v1.2 新增的 `test_webview.py`（50 个用例）。
 
 在本目录下，书中那条命令可以一字不改地运行：
 

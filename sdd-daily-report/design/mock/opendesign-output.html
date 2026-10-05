@@ -1,0 +1,852 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1024">
+<meta name="color-scheme" content="light">
+<title>智能日报生成器 — 本地只读查看</title>
+<style>
+/* =========================================================
+   智能日报生成器 · 本地只读查看
+   设计令牌严格取自 ant design-tokens.json（见设计规范视图）
+   ========================================================= */
+:root{
+  /* 表面 */
+  --c-bg:#ffffff;
+  --c-panel:#f7f8fa;
+  --c-warn-surface:#fff1f0;
+  /* 文本 */
+  --c-text:#1f1f1f;
+  --c-text-2:#4b5563;
+  --c-text-3:#697386;
+  /* 线 */
+  --c-line:#d9dce3;
+  --c-line-soft:#eef0f4;
+  /* 身份与状态 */
+  --c-brand:#d32029;      /* 仅标题重音 + 焦点环 */
+  --c-success:#22a06b;
+  --c-warning:#faad14;
+  --c-error:#cf1322;
+  /* 圆角 */
+  --r-sm:6px;
+  --r-md:10px;
+  --r-pill:9999px;
+  /* 字号 */
+  --fs-12:12px; --fs-14:14px; --fs-16:16px;
+  --fs-18:18px; --fs-22:22px; --fs-32:32px;
+  /* 间距 */
+  --sp-4:4px; --sp-8:8px; --sp-12:12px; --sp-16:16px;
+  --sp-20:20px; --sp-24:24px; --sp-32:32px;
+  /* 布局 */
+  --container:1200px;
+  --gutter:36px;
+  /* 焦点环 */
+  --focus-ring:0 0 0 4px rgba(211,32,41,.22);
+  /* 动效 */
+  --dur-1:140ms;
+  --dur-2:220ms;
+  --ease:cubic-bezier(.2,0,0,1);
+  --font:ui-sans-serif,system-ui,-apple-system,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+}
+
+*,*::before,*::after{box-sizing:border-box}
+[hidden]{display:none !important}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;min-width:1024px;
+  background:var(--c-bg);color:var(--c-text);
+  font-family:var(--font);font-size:var(--fs-16);line-height:1.52;
+  -webkit-font-smoothing:antialiased;overflow-x:hidden;
+  padding-bottom:96px;
+}
+h1,h2,h3,h4,p{margin:0}
+ul,ol,dl{margin:0;padding:0;list-style:none}
+a{color:inherit}
+svg{display:block}
+:focus-visible{outline:none;box-shadow:var(--focus-ring);border-radius:var(--r-sm)}
+.wrap{width:100%;max-width:var(--container);margin:0 auto;padding:0 var(--gutter)}
+.mono{font-family:var(--mono)}
+.num{font-variant-numeric:tabular-nums}
+.sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+/* ---------- 顶部应用栏 ---------- */
+.appbar{position:sticky;top:0;z-index:20;background:var(--c-bg);border-bottom:1px solid var(--c-line-soft)}
+.appbar .wrap{display:flex;align-items:center;justify-content:space-between;height:64px}
+.brand{display:flex;align-items:center;gap:10px;font-size:var(--fs-18);font-weight:600;letter-spacing:-.01em}
+.brand-mark{width:8px;height:8px;border-radius:2px;background:var(--c-brand);flex:none}
+.ro{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 12px 0 10px;border:1px solid var(--c-line);border-radius:var(--r-pill);color:var(--c-text-3);font-size:var(--fs-12);background:var(--c-bg)}
+.ro svg{width:13px;height:13px}
+
+/* ---------- 页面 ---------- */
+.page{padding:var(--sp-32) 0 var(--sp-32)}
+.page-head{margin-bottom:var(--sp-24)}
+.page-title{font-size:var(--fs-22);font-weight:600;letter-spacing:-.01em}
+.page-desc{margin-top:6px;color:var(--c-text-2);font-size:var(--fs-14)}
+.sec-head{display:flex;align-items:baseline;gap:10px;margin-bottom:var(--sp-16)}
+.sec-title{font-size:var(--fs-16);font-weight:600}
+.sec-ext{margin-left:auto;color:var(--c-text-3);font-size:var(--fs-14)}
+
+/* ---------- 徽标 / chip ---------- */
+.badge{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px 0 9px;border-radius:var(--r-pill);font-size:var(--fs-12);font-weight:500;border:1px solid transparent;white-space:nowrap}
+.badge .dot{width:6px;height:6px;border-radius:50%;flex:none}
+.badge.ok{background:rgba(34,160,107,.08);border-color:rgba(34,160,107,.24);color:var(--c-text-2);color:color-mix(in srgb,#22a06b 72%,#1f1f1f)}
+.badge.ok .dot{background:var(--c-success)}
+.badge.warn{background:rgba(250,173,20,.12);border-color:rgba(250,173,20,.32);color:var(--c-text-2);color:color-mix(in srgb,#faad14 45%,#1f1f1f)}
+.badge.warn .dot{background:var(--c-warning)}
+.badge.err{background:rgba(207,19,34,.07);border-color:rgba(207,19,34,.26);color:var(--c-error)}
+.badge.err .dot{background:var(--c-error)}
+
+.chip{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 12px;border-radius:var(--r-sm);border:1px solid var(--c-line);background:var(--c-bg);font-size:13px;color:var(--c-text-2);white-space:nowrap}
+.chip .dot{width:6px;height:6px;border-radius:50%;background:var(--c-success);flex:none}
+.chip svg{width:14px;height:14px;flex:none}
+.chip.failed{background:var(--c-warn-surface);border-color:rgba(207,19,34,.28);color:var(--c-error);font-weight:500}
+.chip .sep{color:var(--c-line);font-weight:400}
+
+/* ---------- 列表 ---------- */
+.list{border:1px solid var(--c-line);border-radius:var(--r-md);overflow:hidden;background:var(--c-bg)}
+.row{display:flex;align-items:center;gap:var(--sp-24);padding:var(--sp-20) var(--sp-24);border-top:1px solid var(--c-line-soft);text-decoration:none;cursor:pointer;transition:background var(--dur-1) var(--ease)}
+.row:first-child{border-top:0}
+.row:hover{background:var(--c-panel)}
+.row-date{width:132px;flex:none}
+.row-date .d{display:block;font-size:var(--fs-18);font-weight:600;letter-spacing:-.01em}
+.row-date .w{display:block;margin-top:2px;font-size:var(--fs-12);color:var(--c-text-3)}
+.row-main{flex:1 1 auto;min-width:0}
+.row-team{font-size:var(--fs-16);font-weight:500}
+.row-meta{margin-top:3px;font-size:var(--fs-14);color:var(--c-text-3)}
+.row-right{flex:none;display:flex;align-items:center;gap:var(--sp-16)}
+.row-chev{width:16px;height:16px;color:var(--c-text-3);transition:transform var(--dur-1) var(--ease)}
+.row:hover .row-chev{transform:translateX(2px)}
+
+/* ---------- 返回 ---------- */
+.back{display:inline-flex;align-items:center;gap:6px;margin-bottom:var(--sp-16);color:var(--c-text-2);font-size:var(--fs-14);text-decoration:none}
+.back svg{width:16px;height:16px}
+.back:hover{color:var(--c-text)}
+
+/* ---------- 详情总览 ---------- */
+.overview{background:var(--c-panel);border:1px solid var(--c-line-soft);border-radius:var(--r-md);padding:var(--sp-24);margin-bottom:var(--sp-24)}
+.ov-top{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--sp-16)}
+.ov-title{font-size:var(--fs-22);font-weight:600;letter-spacing:-.01em}
+.ov-meta{margin-top:6px;font-size:var(--fs-14);color:var(--c-text-3)}
+.ov-chips{display:flex;flex-wrap:wrap;gap:var(--sp-8);margin-top:var(--sp-16)}
+
+/* ---------- 成员卡片 ---------- */
+.members{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--sp-20)}
+.mcard{background:var(--c-bg);border:1px solid var(--c-line);border-radius:var(--r-md);overflow:hidden}
+.mcard-h{display:flex;align-items:baseline;justify-content:space-between;gap:var(--sp-12);padding:var(--sp-16) var(--sp-20);border-bottom:1px solid var(--c-line-soft)}
+.mcard-name{font-size:var(--fs-16);font-weight:600}
+.mcard-sub{font-size:var(--fs-12);color:var(--c-text-3);font-family:var(--mono)}
+.mcard-body{padding:0 var(--sp-20) var(--sp-16)}
+
+.seg{padding:var(--sp-16) 0;border-top:1px solid var(--c-line-soft)}
+.mcard-body > .seg:first-child{border-top:0}
+.seg-h{display:flex;align-items:center;gap:var(--sp-8);margin-bottom:var(--sp-8)}
+.seg-h svg{width:15px;height:15px;color:var(--c-text-3);flex:none}
+.seg-t{font-size:13px;font-weight:600;color:var(--c-text-2);letter-spacing:.02em}
+.seg-c{margin-left:auto;font-size:var(--fs-12);color:var(--c-text-3)}
+
+.item{padding:var(--sp-8) 0}
+.item + .item{border-top:1px solid var(--c-line-soft)}
+.item-main{display:block;font-size:var(--fs-14);line-height:1.5}
+.item-meta{display:block;margin-top:3px;font-size:var(--fs-12);color:var(--c-text-3)}
+.item-meta .repo{color:var(--c-text-2)}
+.item-meta .sep{margin:0 6px;color:var(--c-line)}
+.add{color:var(--c-success);font-weight:500}
+.del{color:var(--c-text-2)}
+.st-from{color:var(--c-text-3)}
+.st-arrow{margin:0 5px;color:var(--c-line)}
+.st-to{color:var(--c-text);font-weight:500}
+
+/* 考勤 */
+.att{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--sp-12)}
+.att dt{font-size:var(--fs-12);color:var(--c-text-3)}
+.att dd{margin:2px 0 0;font-size:var(--fs-14)}
+.att .hl-ok{color:var(--c-success);font-weight:500}
+.att .hl-warn{color:var(--c-text-2);color:color-mix(in srgb,#faad14 45%,#1f1f1f);font-weight:500}
+
+/* ---------- 三种段级异常（形状 + 色彩 + 重量三重区分） ---------- */
+.notice{display:flex;align-items:center;gap:var(--sp-8);padding:10px 12px;border:1px dashed var(--c-line);border-radius:var(--r-sm);background:var(--c-panel);color:var(--c-text-2);font-size:13px}
+.notice svg{width:14px;height:14px;color:var(--c-warning);flex:none}
+.norec{display:block;padding:var(--sp-8) 0;font-size:13px;color:var(--c-text-3)}
+
+/* ---------- 空态 ---------- */
+.empty{border:1px dashed var(--c-line);border-radius:var(--r-md);background:var(--c-panel);padding:56px var(--sp-24);text-align:center}
+.empty svg{width:40px;height:40px;color:var(--c-text-3);margin:0 auto var(--sp-12)}
+.empty-t{font-size:var(--fs-16);font-weight:600}
+.empty-d{margin-top:6px;font-size:var(--fs-14);color:var(--c-text-3)}
+
+/* ---------- 异常态页 ---------- */
+.incontext{border:1px solid var(--c-line);border-radius:var(--r-md);padding:var(--sp-24);margin-bottom:var(--sp-20)}
+.ic-note{display:inline-flex;align-items:center;gap:6px;margin-bottom:var(--sp-16);font-size:var(--fs-12);color:var(--c-text-3)}
+.ic-note::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--c-line)}
+.ic-block + .ic-block{margin-top:var(--sp-32)}
+.specimen-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--sp-20)}
+.spec-tile{border:1px solid var(--c-line);border-radius:var(--r-md);overflow:hidden;background:var(--c-bg)}
+.spec-tile-h{display:flex;align-items:center;gap:var(--sp-8);padding:var(--sp-12) var(--sp-16);border-bottom:1px solid var(--c-line-soft);background:var(--c-panel)}
+.spec-no{font-size:var(--fs-12);color:var(--c-text-3)}
+.spec-tile-h h4{font-size:13px;font-weight:600;color:var(--c-text-2)}
+.spec-tag{margin-left:auto;font-size:var(--fs-12);color:var(--c-error);background:var(--c-warn-surface);border:1px solid rgba(207,19,34,.22);border-radius:var(--r-sm);padding:1px 8px}
+.spec-tile-b{padding:var(--sp-20) var(--sp-16)}
+.spec-tile-b.center{display:flex;justify-content:center}
+
+/* ---------- 设计规范页 ---------- */
+.spec-sec{margin-bottom:var(--sp-32)}
+.spec-sec > h2{font-size:var(--fs-18);font-weight:600;padding-bottom:10px;border-bottom:1px solid var(--c-line-soft);margin-bottom:var(--sp-20)}
+.spec-lead{color:var(--c-text-2);font-size:var(--fs-14);line-height:1.7;max-width:70ch}
+.spec-lead + .spec-lead{margin-top:var(--sp-8)}
+.sw-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--sp-16)}
+.sw{border:1px solid var(--c-line);border-radius:var(--r-md);overflow:hidden}
+.sw-color{height:56px;border-bottom:1px solid var(--c-line-soft)}
+.sw-body{padding:var(--sp-12)}
+.sw-name{font-size:13px;font-weight:600}
+.sw-hex{margin-top:2px;font-size:var(--fs-12);color:var(--c-text-3);font-family:var(--mono)}
+.sw-use{margin-top:6px;font-size:var(--fs-12);color:var(--c-text-2);line-height:1.5}
+.rows{border:1px solid var(--c-line);border-radius:var(--r-md);overflow:hidden}
+.rows > div{display:flex;align-items:baseline;gap:var(--sp-20);padding:var(--sp-12) var(--sp-16);border-top:1px solid var(--c-line-soft)}
+.rows > div:first-child{border-top:0}
+.rows .k{width:150px;flex:none;font-size:var(--fs-12);color:var(--c-text-3)}
+.rows .v{flex:1 1 auto}
+.space-bar{height:12px;background:var(--c-panel);border:1px solid var(--c-line);border-radius:3px}
+.comp-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--sp-16)}
+.comp{border:1px solid var(--c-line);border-radius:var(--r-md);padding:var(--sp-16)}
+.comp-k{font-size:var(--fs-12);color:var(--c-text-3);margin-bottom:var(--sp-12)}
+.comp-v{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-8)}
+.ring-demo{display:inline-flex;align-items:center;height:32px;padding:0 14px;border:1px solid var(--c-line);border-radius:var(--r-sm);font-size:var(--fs-14);background:var(--c-bg)}
+.ring-demo.on{box-shadow:var(--focus-ring);border-color:var(--c-brand)}
+
+/* ---------- 设计稿导航（评审用，非产品 UI） ---------- */
+.review-nav{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:50;display:flex;gap:4px;padding:6px;border-radius:var(--r-pill);background:#1f1f1f;box-shadow:0 8px 28px rgba(15,23,42,.26)}
+.review-nav a{display:inline-flex;align-items:center;height:32px;padding:0 16px;border-radius:var(--r-pill);color:rgba(255,255,255,.72);font-size:13px;text-decoration:none;transition:background var(--dur-1) var(--ease),color var(--dur-1) var(--ease)}
+.review-nav a:hover{color:#fff;background:rgba(255,255,255,.08)}
+.review-nav a[aria-current="page"]{background:#fff;color:#1f1f1f;font-weight:600}
+.review-nav a:focus-visible{box-shadow:0 0 0 2px #1f1f1f,0 0 0 6px rgba(211,32,41,.6)}
+
+@media (prefers-reduced-motion:reduce){
+  *{transition-duration:1ms !important;animation-duration:1ms !important}
+}
+</style>
+</head>
+<body>
+
+<header class="appbar">
+  <div class="wrap">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span>智能日报生成器</div>
+    <span class="ro" title="本地只读视图">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg>
+      只读
+    </span>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- ============ 列表页 ============ -->
+  <section id="view-list" class="view" aria-labelledby="h-list">
+    <div class="wrap page">
+      <div class="page-head">
+        <h1 class="page-title" id="h-list" tabindex="-1" data-focus>日报记录</h1>
+        <p class="page-desc">按日期倒序浏览本机已生成的团队日报。点击任意一期查看详情。</p>
+      </div>
+      <div class="sec-head">
+        <h2 class="sec-title">2026 年 9 月</h2>
+        <span class="sec-ext num">共 5 期</span>
+      </div>
+      <div class="list">
+        <a class="row" href="#detail">
+          <div class="row-date"><span class="d num">09-30</span><span class="w">周三</span></div>
+          <div class="row-main">
+            <div class="row-team">平台研发组</div>
+            <div class="row-meta num">3 名成员 · 生成于 18:04</div>
+          </div>
+          <div class="row-right">
+            <span class="badge ok"><span class="dot"></span>数据源正常</span>
+            <svg class="row-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+          </div>
+        </a>
+        <a class="row" href="#detail">
+          <div class="row-date"><span class="d num">09-29</span><span class="w">周二</span></div>
+          <div class="row-main">
+            <div class="row-team">平台研发组</div>
+            <div class="row-meta num">3 名成员 · 生成于 18:02</div>
+          </div>
+          <div class="row-right">
+            <span class="badge warn"><span class="dot"></span>部分数据源失败</span>
+            <svg class="row-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+          </div>
+        </a>
+        <a class="row" href="#detail">
+          <div class="row-date"><span class="d num">09-28</span><span class="w">周一</span></div>
+          <div class="row-main">
+            <div class="row-team">平台研发组</div>
+            <div class="row-meta num">3 名成员 · 生成于 18:05</div>
+          </div>
+          <div class="row-right">
+            <span class="badge err"><span class="dot"></span>数据源全部失败</span>
+            <svg class="row-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+          </div>
+        </a>
+        <a class="row" href="#detail">
+          <div class="row-date"><span class="d num">09-25</span><span class="w">周五</span></div>
+          <div class="row-main">
+            <div class="row-team">平台研发组</div>
+            <div class="row-meta num">3 名成员 · 生成于 18:03</div>
+          </div>
+          <div class="row-right">
+            <span class="badge ok"><span class="dot"></span>数据源正常</span>
+            <svg class="row-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+          </div>
+        </a>
+        <a class="row" href="#detail">
+          <div class="row-date"><span class="d num">09-24</span><span class="w">周四</span></div>
+          <div class="row-main">
+            <div class="row-team">平台研发组</div>
+            <div class="row-meta num">3 名成员 · 生成于 18:01</div>
+          </div>
+          <div class="row-right">
+            <span class="badge warn"><span class="dot"></span>部分数据源失败</span>
+            <svg class="row-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+          </div>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 详情页 ============ -->
+  <section id="view-detail" class="view" hidden aria-labelledby="h-detail">
+    <div class="wrap page">
+      <a class="back" href="#list">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+        返回列表
+      </a>
+
+      <div class="overview">
+        <div class="ov-top">
+          <div>
+            <h1 class="ov-title num" id="h-detail" tabindex="-1" data-focus>2026-09-30 · 平台研发组</h1>
+            <p class="ov-meta num">3 名成员 · 生成于 18:04</p>
+          </div>
+          <span class="badge ok"><span class="dot"></span>数据源正常</span>
+        </div>
+        <div class="ov-chips">
+          <span class="chip"><span class="dot"></span>GitHub</span>
+          <span class="chip"><span class="dot"></span>飞书任务</span>
+          <span class="chip"><span class="dot"></span>飞书消息</span>
+          <span class="chip"><span class="dot"></span>飞书考勤</span>
+        </div>
+      </div>
+
+      <div class="sec-head"><h2 class="sec-title">成员日报</h2><span class="sec-ext num">3 人</span></div>
+
+      <div class="members">
+
+        <!-- 张三 -->
+        <article class="mcard">
+          <header class="mcard-h"><span class="mcard-name">张三</span><span class="mcard-sub">zhangsan</span></header>
+          <div class="mcard-body">
+            <section class="seg">
+              <div class="seg-h">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M3 12h5.8M15.2 12H21"/></svg>
+                <span class="seg-t">代码提交</span><span class="seg-c num">2</span>
+              </div>
+              <div class="item">
+                <span class="item-main">fix: 修正日报生成时区错位（UTC+8）</span>
+                <span class="item-meta num"><span class="repo">app-server</span><span class="sep">·</span>17:42<span class="sep">·</span><span class="add">+34</span> <span class="del">−12</span><span class="sep">·</span>5 文件</span>
+              </div>
+              <div class="item">
+                <span class="item-main">feat: 接入飞书考勤采集适配器</span>
+                <span class="item-meta num"><span class="repo">app-server</span><span class="sep">·</span>11:08<span class="sep">·</span><span class="add">+182</span> <span class="del">−6</span><span class="sep">·</span>9 文件</span>
+              </div>
+            </section>
+
+            <section class="seg">
+              <div class="seg-h">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5l1.4 1.4L8 5.4"/><path d="M4 12.5l1.4 1.4L8 11.4"/><path d="M4 18.5l1.4 1.4L8 17.4"/><path d="M11.5 6.5H20M11.5 12.5H20M11.5 18.5H20"/></svg>
+                <span class="seg-t">任务进展</span><span class="seg-c num">2</span>
+              </div>
+              <div class="item">
+                <span class="item-main">日报模板重构</span>
+                <span class="item-meta num"><span class="st-from">进行中</span><span class="st-arrow">→</span><span class="st-to">已完成</span><span class="sep">·</span>16:20</span>
+              </div>
+              <div class="item">
+                <span class="item-main">SQLite 迁移脚本</span>
+                <span class="item-meta num"><span class="st-from">待处理</span><span class="st-arrow">→</span><span class="st-to">进行中</span><span class="sep">·</span>10:05</span>
+              </div>
+            </section>
+
+            <section class="seg">
+              <div class="seg-h">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><path d="M12 7.4v4.9l3.2 2"/></svg>
+                <span class="seg-t">考勤</span>
+              </div>
+              <dl class="att">
+                <div><dt>签到</dt><dd class="num">09:02</dd></div>
+                <div><dt>签退</dt><dd class="num">18:31</dd></div>
+                <div><dt>工时</dt><dd class="num">9.5 h</dd></div>
+                <div><dt>状态</dt><dd class="hl-ok">正常</dd></div>
+              </dl>
+            </section>
+
+            <section class="seg">
+              <div class="seg-h">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.3a3 3 0 0 1-3 3H8.6L4 21V6.7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3z"/></svg>
+                <span class="seg-t">协作沟通</span><span class="seg-c num">1</span>
+              </div>
+              <div class="item">
+                <span class="item-main">考勤接口的日期字段要转成 YYYYMMDD 整数，文档没写清楚。</span>
+                <span class="item-meta">张三<span class="sep">·</span>平台研发组<span class="sep">·</span>15:47</span>
+              </div>
+            </section>
+          </div>
+        </article>
+
+        <!-- 李四 -->
+        <article class="mcard">
+          <header class="mcard-h"><span class="mcard-name">李四</span><span class="mcard-sub">lisi-dev</span></header>
+          <div class="mcard-body">
+            <section class="seg">
+              <div class="seg-h">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M3 12h5.8M15.2 12H21"/></svg>
+                <span class="seg-t">代码提交</span><span class="seg-c num">1</span>
+              </div>
+              <div class="item">
+                <span class="item-main">refactor: 抽取 CollectResult 统一返回类型</span>
+                <span class="item-meta num"><span class="repo">app-server</span><span class="sep">·</span>15:12<span class="sep">·</span><span class="add">+96</span> <span class="del">−140</span><span class="sep">·</span>7 文件</span>
+              </div>
+            </section>
+
+            <section class="seg">
+              <div class="seg-h">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5l1.4 1.4L8 5.4"/><path d="M4 12.5l1.4 1.4L8 11.4"/><path d="M4 18.5l1.4 1.4L8 17.4"/><path d="M11.5 6.5H20M11.5 12.5H20M11.5 18.5H20"/></svg>
+                <span class="seg-t">任务进展</span><span class="seg-c num">1</span>
+              </div>
+              <div class="item">
+                <span class="item-main">采集层异常降级与重试</span>
+                <span class="item-meta num"><span class="st-from">待处理</span><span class="st-arrow">→</span><span class="st-to">已完成</span><span class="sep">·</span>14:30</span>
+              </div>
+            </section>
+
+            <section class="seg">
+              <div class="seg-h">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><path d="M12 7.4v4.9l3.2 2"/></svg>
+                <span class="seg-t">考勤</span>
+              </div>
+              <dl class="att">
+                <div><dt>签到</dt><dd class="num">09:37</dd></div>
+                <div><dt>签退</dt><dd class="num">18:05</dd></div>
+                <div><dt>工时</dt><dd class="num">8.5 h</dd></div>
+                <div><dt>状态</dt><dd class="hl-warn">迟到</dd></div>
+              </dl>
+            </section>
+
+            <section class="seg">
+              <div class="seg-h">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.3a3 3 0 0 1-3 3H8.6L4 21V6.7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3z"/></svg>
+                <span class="seg-t">协作沟通</span><span class="seg-c num">1</span>
+              </div>
+              <div class="item">
+                <span class="item-main">邮件重试两次还是失败就走飞书告警，避免静默跳过。</span>
+                <span class="item-meta">李四<span class="sep">·</span>平台研发组<span class="sep">·</span>16:02</span>
+              </div>
+            </section>
+          </div>
+        </article>
+
+        <!-- 王五 -->
+        <article class="mcard">
+          <header class="mcard-h"><span class="mcard-name">王五</span><span class="mcard-sub">wangwu</span></header>
+          <div class="mcard-body">
+            <section class="seg">
+              <div class="seg-h">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M3 12h5.8M15.2 12H21"/></svg>
+                <span class="seg-t">代码提交</span>
+              </div>
+              <span class="norec">今日无记录</span>
+            </section>
+
+            <section class="seg">
+              <div class="seg-h">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5l1.4 1.4L8 5.4"/><path d="M4 12.5l1.4 1.4L8 11.4"/><path d="M4 18.5l1.4 1.4L8 17.4"/><path d="M11.5 6.5H20M11.5 12.5H20M11.5 18.5H20"/></svg>
+                <span class="seg-t">任务进展</span><span class="seg-c num">2</span>
+              </div>
+              <div class="item">
+                <span class="item-main">飞书机器人推送支持 open_id</span>
+                <span class="item-meta num"><span class="st-from">进行中</span><span class="st-arrow">→</span><span class="st-to">已完成</span><span class="sep">·</span>17:10</span>
+              </div>
+              <div class="item">
+                <span class="item-main">健康检查 --check 补充邮件校验</span>
+                <span class="item-meta num"><span class="st-from">待处理</span><span class="st-arrow">→</span><span class="st-to">进行中</span><span class="sep">·</span>09:48</span>
+              </div>
+            </section>
+
+            <section class="seg">
+              <div class="seg-h">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><path d="M12 7.4v4.9l3.2 2"/></svg>
+                <span class="seg-t">考勤</span>
+              </div>
+              <dl class="att">
+                <div><dt>签到</dt><dd class="num">09:15</dd></div>
+                <div><dt>签退</dt><dd class="num">—</dd></div>
+                <div><dt>工时</dt><dd class="num">0.0 h</dd></div>
+                <div><dt>状态</dt><dd class="hl-warn">签退缺失</dd></div>
+              </dl>
+            </section>
+
+            <section class="seg">
+              <div class="seg-h">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.3a3 3 0 0 1-3 3H8.6L4 21V6.7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3z"/></svg>
+                <span class="seg-t">协作沟通</span><span class="seg-c num">1</span>
+              </div>
+              <div class="item">
+                <span class="item-main">刚跑完 --check，三个接口都通了。</span>
+                <span class="item-meta">王五<span class="sep">·</span>平台研发组<span class="sep">·</span>09:20</span>
+              </div>
+            </section>
+          </div>
+        </article>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 异常与空态 ============ -->
+  <section id="view-states" class="view" hidden aria-labelledby="h-states">
+    <div class="wrap page">
+      <div class="page-head">
+        <h1 class="page-title" id="h-states" tabindex="-1" data-focus>异常与空态</h1>
+        <p class="page-desc">五种状态：三种段级异常 + 两个页面级状态。下面先以「就地真实语境」呈现，再以「独立小样」集中对照。三者用形状、重量、色彩三重区分，不混为一谈。</p>
+      </div>
+
+      <section class="spec-sec">
+        <h2>一、就地呈现（真实页面语境）</h2>
+
+        <div class="incontext">
+          <div class="ic-note">详情页 · 顶部数据源 chip「数据获取失败」</div>
+          <div class="overview" style="margin-bottom:0">
+            <div class="ov-top">
+              <div>
+                <div class="ov-title num">2026-09-29 · 平台研发组</div>
+                <p class="ov-meta num">3 名成员 · 生成于 18:02</p>
+              </div>
+              <span class="badge warn"><span class="dot"></span>部分数据源失败</span>
+            </div>
+            <div class="ov-chips">
+              <span class="chip"><span class="dot"></span>GitHub</span>
+              <span class="chip"><span class="dot"></span>飞书任务</span>
+              <span class="chip"><span class="dot"></span>飞书消息</span>
+              <span class="chip failed">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg>
+                飞书考勤<span class="sep">·</span>数据获取失败
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="incontext">
+          <div class="ic-note">成员卡片 · 考勤段「考勤数据暂不可用」 / 数据段「今日无记录」</div>
+          <div class="members" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+            <article class="mcard">
+              <header class="mcard-h"><span class="mcard-name">张三</span><span class="mcard-sub">zhangsan</span></header>
+              <div class="mcard-body">
+                <section class="seg">
+                  <div class="seg-h">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M3 12h5.8M15.2 12H21"/></svg>
+                    <span class="seg-t">代码提交</span><span class="seg-c num">1</span>
+                  </div>
+                  <div class="item">
+                    <span class="item-main">fix: 修正日报生成时区错位（UTC+8）</span>
+                    <span class="item-meta num"><span class="repo">app-server</span><span class="sep">·</span>17:42<span class="sep">·</span><span class="add">+34</span> <span class="del">−12</span><span class="sep">·</span>5 文件</span>
+                  </div>
+                </section>
+                <section class="seg">
+                  <div class="seg-h">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><path d="M12 7.4v4.9l3.2 2"/></svg>
+                    <span class="seg-t">考勤</span>
+                  </div>
+                  <div class="notice">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5.2"/><path d="M12 16.4h.01"/></svg>
+                    考勤数据暂不可用
+                  </div>
+                </section>
+                <section class="seg">
+                  <div class="seg-h">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.3a3 3 0 0 1-3 3H8.6L4 21V6.7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3z"/></svg>
+                    <span class="seg-t">协作沟通</span>
+                  </div>
+                  <span class="norec">今日无记录</span>
+                </section>
+              </div>
+            </article>
+            <article class="mcard">
+              <header class="mcard-h"><span class="mcard-name">李四</span><span class="mcard-sub">lisi-dev</span></header>
+              <div class="mcard-body">
+                <section class="seg">
+                  <div class="seg-h">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M3 12h5.8M15.2 12H21"/></svg>
+                    <span class="seg-t">代码提交</span><span class="seg-c num">1</span>
+                  </div>
+                  <div class="item">
+                    <span class="item-main">refactor: 抽取 CollectResult 统一返回类型</span>
+                    <span class="item-meta num"><span class="repo">app-server</span><span class="sep">·</span>15:12<span class="sep">·</span><span class="add">+96</span> <span class="del">−140</span><span class="sep">·</span>7 文件</span>
+                  </div>
+                </section>
+                <section class="seg">
+                  <div class="seg-h">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><path d="M12 7.4v4.9l3.2 2"/></svg>
+                    <span class="seg-t">考勤</span>
+                  </div>
+                  <dl class="att">
+                    <div><dt>签到</dt><dd class="num">09:37</dd></div>
+                    <div><dt>签退</dt><dd class="num">18:05</dd></div>
+                    <div><dt>工时</dt><dd class="num">8.5 h</dd></div>
+                    <div><dt>状态</dt><dd class="hl-warn">迟到</dd></div>
+                  </dl>
+                </section>
+                <section class="seg">
+                  <div class="seg-h">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.3a3 3 0 0 1-3 3H8.6L4 21V6.7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3z"/></svg>
+                    <span class="seg-t">协作沟通</span><span class="seg-c num">1</span>
+                  </div>
+                  <div class="item">
+                    <span class="item-main">邮件重试两次还是失败就走飞书告警，避免静默跳过。</span>
+                    <span class="item-meta">李四<span class="sep">·</span>平台研发组<span class="sep">·</span>16:02</span>
+                  </div>
+                </section>
+              </div>
+            </article>
+          </div>
+        </div>
+
+        <div class="incontext">
+          <div class="ic-note">列表页 · 库中无日报（空态）</div>
+          <div class="empty">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13.5l2-7A2 2 0 0 1 7.9 5h8.2a2 2 0 0 1 1.9 1.5l2 7"/><path d="M4 13.5V18a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4.5h-4.2a2 2 0 0 1-3.9 0z"/></svg>
+            <p class="empty-t">还没有生成过日报</p>
+            <p class="empty-d">本机数据库暂无记录。等待 18:00 定时任务首次生成后即可在此查看。</p>
+          </div>
+
+          <div class="ic-block">
+            <div class="ic-note">详情页 · 指定日期没有日报记录</div>
+            <div class="empty">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="16" rx="2"/><path d="M3.5 9.5h17M8 3v4M16 3v4"/><path d="M12 13.5v3.2M12 19.1h.01"/></svg>
+              <p class="empty-t">该日期没有日报记录</p>
+              <p class="empty-d">2026-09-27 无对应日报（可能为非工作日或当日未触发生成）。</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="spec-sec">
+        <h2>二、独立小样（集中对照）</h2>
+        <div class="specimen-grid">
+
+          <article class="spec-tile">
+            <header class="spec-tile-h"><span class="spec-no">①</span><h4>顶部数据源 chip</h4><span class="spec-tag">数据获取失败</span></header>
+            <div class="spec-tile-b">
+              <span class="chip failed">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg>
+                GitHub<span class="sep">·</span>数据获取失败
+              </span>
+            </div>
+          </article>
+
+          <article class="spec-tile">
+            <header class="spec-tile-h"><span class="spec-no">②</span><h4>成员卡片 · 考勤段</h4><span class="spec-tag">考勤数据暂不可用</span></header>
+            <div class="spec-tile-b">
+              <div class="notice">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5.2"/><path d="M12 16.4h.01"/></svg>
+                考勤数据暂不可用
+              </div>
+            </div>
+          </article>
+
+          <article class="spec-tile">
+            <header class="spec-tile-h"><span class="spec-no">③</span><h4>成员卡片 · 任一数据段无数据</h4><span class="spec-tag">今日无记录</span></header>
+            <div class="spec-tile-b">
+              <span class="norec">今日无记录</span>
+            </div>
+          </article>
+
+          <article class="spec-tile">
+            <header class="spec-tile-h"><span class="spec-no">④</span><h4>详情页 · 指定日期查不到</h4><span class="spec-tag">该日期没有日报记录</span></header>
+            <div class="spec-tile-b">
+              <div class="empty" style="padding:32px 16px">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="16" rx="2"/><path d="M3.5 9.5h17M8 3v4M16 3v4"/><path d="M12 13.5v3.2M12 19.1h.01"/></svg>
+                <p class="empty-t">该日期没有日报记录</p>
+              </div>
+            </div>
+          </article>
+
+          <article class="spec-tile">
+            <header class="spec-tile-h"><span class="spec-no">⑤</span><h4>列表页 · 库中无日报</h4><span class="spec-tag">空态</span></header>
+            <div class="spec-tile-b">
+              <div class="empty" style="padding:32px 16px">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13.5l2-7A2 2 0 0 1 7.9 5h8.2a2 2 0 0 1 1.9 1.5l2 7"/><path d="M4 13.5V18a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4.5h-4.2a2 2 0 0 1-3.9 0z"/></svg>
+                <p class="empty-t">还没有生成过日报</p>
+              </div>
+            </div>
+          </article>
+
+          <article class="spec-tile">
+            <header class="spec-tile-h"><span class="spec-no">—</span><h4>日报状态徽标（三态）</h4><span class="spec-tag" style="color:var(--c-text-3);background:var(--c-panel);border-color:var(--c-line)">对照</span></header>
+            <div class="spec-tile-b comp-v">
+              <span class="badge ok"><span class="dot"></span>数据源正常</span>
+              <span class="badge warn"><span class="dot"></span>部分数据源失败</span>
+              <span class="badge err"><span class="dot"></span>数据源全部失败</span>
+            </div>
+          </article>
+
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <!-- ============ 设计规范 ============ -->
+  <section id="view-spec" class="view" hidden aria-labelledby="h-spec">
+    <div class="wrap page">
+      <div class="page-head">
+        <h1 class="page-title" id="h-spec" tabindex="-1" data-focus>设计规范</h1>
+        <p class="page-desc">颜色、字号、间距、组件与设计说明。取色一律以 ant 设计令牌为准；品牌强调 #d32029 仅用于标题重音与焦点环。</p>
+      </div>
+
+      <section class="spec-sec">
+        <h2>颜色令牌</h2>
+        <div class="sw-grid">
+          <div class="sw"><div class="sw-color" style="background:#ffffff"></div><div class="sw-body"><div class="sw-name">页面背景</div><div class="sw-hex">#ffffff</div><div class="sw-use">页面底色、卡片底色</div></div></div>
+          <div class="sw"><div class="sw-color" style="background:#f7f8fa"></div><div class="sw-body"><div class="sw-name">分组底板</div><div class="sw-hex">#f7f8fa</div><div class="sw-use">总览面板、悬停、空态底</div></div></div>
+          <div class="sw"><div class="sw-color" style="background:#fff1f0"></div><div class="sw-body"><div class="sw-name">警告底色</div><div class="sw-hex">#fff1f0</div><div class="sw-use">失败 chip 底</div></div></div>
+          <div class="sw"><div class="sw-color" style="background:#d9dce3"></div><div class="sw-body"><div class="sw-name">分隔线</div><div class="sw-hex">#d9dce3</div><div class="sw-use">容器描边、虚线通知</div></div></div>
+          <div class="sw"><div class="sw-color" style="background:#1f1f1f"></div><div class="sw-body"><div class="sw-name">正文</div><div class="sw-hex">#1f1f1f</div><div class="sw-use">标题与正文</div></div></div>
+          <div class="sw"><div class="sw-color" style="background:#4b5563"></div><div class="sw-body"><div class="sw-name">次级</div><div class="sw-hex">#4b5563</div><div class="sw-use">段标题、辅助文字</div></div></div>
+          <div class="sw"><div class="sw-color" style="background:#697386"></div><div class="sw-body"><div class="sw-name">弱化</div><div class="sw-hex">#697386</div><div class="sw-use">元信息、时间</div></div></div>
+          <div class="sw"><div class="sw-color" style="background:#eef0f4"></div><div class="sw-body"><div class="sw-name">浅分隔线</div><div class="sw-hex">#eef0f4</div><div class="sw-use">段落与行间分隔</div></div></div>
+          <div class="sw"><div class="sw-color" style="background:#d32029"></div><div class="sw-body"><div class="sw-name">品牌强调</div><div class="sw-hex">#d32029</div><div class="sw-use">标题重音、焦点环（不表示错误）</div></div></div>
+          <div class="sw"><div class="sw-color" style="background:#22a06b"></div><div class="sw-body"><div class="sw-name">成功</div><div class="sw-hex">#22a06b</div><div class="sw-use">数据源正常、+行</div></div></div>
+          <div class="sw"><div class="sw-color" style="background:#faad14"></div><div class="sw-body"><div class="sw-name">警告</div><div class="sw-hex">#faad14</div><div class="sw-use">部分失败、迟到、签退缺失</div></div></div>
+          <div class="sw"><div class="sw-color" style="background:#cf1322"></div><div class="sw-body"><div class="sw-name">错误</div><div class="sw-hex">#cf1322</div><div class="sw-use">失败态一律用此色</div></div></div>
+        </div>
+      </section>
+
+      <section class="spec-sec">
+        <h2>字号</h2>
+        <div class="rows">
+          <div><span class="k">32px / 600</span><span class="v" style="font-size:32px;font-weight:600;letter-spacing:-.02em">日报详情</span></div>
+          <div><span class="k">22px / 600</span><span class="v" style="font-size:22px;font-weight:600">页面标题 · 总览</span></div>
+          <div><span class="k">18px / 600</span><span class="v" style="font-size:18px;font-weight:600">工具名 · 列表日期</span></div>
+          <div><span class="k">16px / 400</span><span class="v" style="font-size:16px">正文 · 团队名（行高 1.52）</span></div>
+          <div><span class="k">14px / 400</span><span class="v" style="font-size:14px">列表元信息 · 卡片条目</span></div>
+          <div><span class="k">12px / 500</span><span class="v" style="font-size:12px">徽标 · 段标题 · 弱化元信息</span></div>
+        </div>
+      </section>
+
+      <section class="spec-sec">
+        <h2>间距</h2>
+        <div class="rows">
+          <div><span class="k">4px</span><span class="v"><span class="space-bar" style="width:4px"></span></span></div>
+          <div><span class="k">8px</span><span class="v"><span class="space-bar" style="width:8px"></span></span></div>
+          <div><span class="k">12px</span><span class="v"><span class="space-bar" style="width:12px"></span></span></div>
+          <div><span class="k">16px</span><span class="v"><span class="space-bar" style="width:16px"></span></span></div>
+          <div><span class="k">20px</span><span class="v"><span class="space-bar" style="width:20px"></span></span></div>
+          <div><span class="k">24px</span><span class="v"><span class="space-bar" style="width:24px"></span></span></div>
+          <div><span class="k">32px</span><span class="v"><span class="space-bar" style="width:32px"></span></span></div>
+        </div>
+      </section>
+
+      <section class="spec-sec">
+        <h2>圆角 · 焦点环 · 动效</h2>
+        <div class="rows">
+          <div><span class="k">圆角 · 小 6px</span><span class="v"><span class="space-bar" style="width:64px;height:28px;border-radius:6px"></span></span></div>
+          <div><span class="k">圆角 · 中 10px</span><span class="v"><span class="space-bar" style="width:64px;height:28px;border-radius:10px"></span></span></div>
+          <div><span class="k">圆角 · 胶囊 9999px</span><span class="v"><span class="space-bar" style="width:64px;height:28px;border-radius:9999px"></span></span></div>
+          <div><span class="k">焦点环</span><span class="v"><span class="ring-demo on">0 0 0 4px rgba(211,32,41,.22)</span></span></div>
+          <div><span class="k">动效</span><span class="v" style="font-size:14px">140ms / 220ms · cubic-bezier(.2,0,0,1)</span></div>
+        </div>
+      </section>
+
+      <section class="spec-sec">
+        <h2>组件清单</h2>
+        <div class="comp-grid">
+          <div class="comp"><div class="comp-k">状态徽标 · 三态</div><div class="comp-v">
+            <span class="badge ok"><span class="dot"></span>数据源正常</span>
+            <span class="badge warn"><span class="dot"></span>部分数据源失败</span>
+            <span class="badge err"><span class="dot"></span>数据源全部失败</span>
+          </div></div>
+          <div class="comp"><div class="comp-k">数据源 chip · 正常 / 失败</div><div class="comp-v">
+            <span class="chip"><span class="dot"></span>GitHub</span>
+            <span class="chip failed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg>GitHub<span class="sep">·</span>数据获取失败</span>
+          </div></div>
+          <div class="comp"><div class="comp-k">只读标记</div><div class="comp-v">
+            <span class="ro"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg>只读</span>
+          </div></div>
+          <div class="comp"><div class="comp-k">空态</div><div class="comp-v">
+            <div class="empty" style="width:100%;padding:24px 16px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13.5l2-7A2 2 0 0 1 7.9 5h8.2a2 2 0 0 1 1.9 1.5l2 7"/><path d="M4 13.5V18a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4.5h-4.2a2 2 0 0 1-3.9 0z"/></svg><p class="empty-t">没有记录</p></div>
+          </div></div>
+          <div class="comp"><div class="comp-k">异常 · 段级（三种形状）</div><div class="comp-v" style="flex-direction:column;align-items:stretch">
+            <span class="chip failed" style="align-self:flex-start"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg>数据获取失败</span>
+            <div class="notice"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5.2"/><path d="M12 16.4h.01"/></svg>考勤数据暂不可用</div>
+            <span class="norec">今日无记录</span>
+          </div></div>
+          <div class="comp"><div class="comp-k">列表项（缩略）</div><div class="comp-v" style="flex-direction:column;align-items:stretch">
+            <div class="list"><div class="row" style="cursor:default">
+              <div class="row-date"><span class="d num">09-30</span><span class="w">周三</span></div>
+              <div class="row-main"><div class="row-team">平台研发组</div><div class="row-meta num">3 名成员 · 生成于 18:04</div></div>
+              <div class="row-right"><span class="badge ok"><span class="dot"></span>数据源正常</span></div>
+            </div></div>
+          </div></div>
+        </div>
+      </section>
+
+      <section class="spec-sec">
+        <h2>设计说明</h2>
+        <p class="spec-lead">层级与信息架构：只做两级——列表页负责“哪几天有日报、状态如何”，详情页负责“每个人做了什么”。列表按日期倒序，日期是主键，所以用 18px 加粗数字 + 星期弱化注脚；团队名与元信息退到第二层，状态徽标靠右对齐形成可扫视的一列。</p>
+        <p class="spec-lead">三种异常为什么长得不一样：数据获取失败是“系统出问题了”，用红色实心 chip（#cf1322 + #fff1f0 底 + ✕ 图标），最响；考勤数据暂不可用是“这一块缺失”，用虚线边框 + 琥珀色圆点的通知块，音量中等；今日无记录是“确实没有这件事”，只是静默的弱化文字，音量最低。红实心 / 虚线块 / 纯文字在形状、重量、色彩三个维度都不同，扫一眼即可区分。</p>
+        <p class="spec-lead">品牌红与错误红：#d32029 是身份色，只出现在工具名的标记点和焦点环上，绝不用于表达失败；一切失败态统一用 #cf1322。两者色相接近，靠使用位置区分，避免“红色到底是品牌还是报错”的歧义。</p>
+        <p class="spec-lead">状态不靠颜色单打：徽标 = 圆点色 + 文案，考勤状态 = 文字 + 颜色，图标 + 文字共同承担，色觉障碍用户也能读。正文 16px / 行高 1.52，弱化文字 #697386 仍保持 4.5:1 以上对比。</p>
+        <p class="spec-lead">克制的原因：这是内部数据工具，不做图表、搜索、筛选、分页与编辑——读者只需要翻看，界面越安静，数据越突出。留白按 4/8 的节奏，容器 1200px、左右 36px，两列成员卡保证一屏内可横向对比。桌面单页、下限 1024px，不做移动端与暗色模式。</p>
+      </section>
+    </div>
+  </section>
+
+</main>
+
+<nav class="review-nav" aria-label="设计稿导航（评审用，非产品界面）">
+  <a href="#list">列表</a>
+  <a href="#detail">详情</a>
+  <a href="#states">异常态</a>
+  <a href="#spec">规范</a>
+</nav>
+
+<script>
+(function(){
+  var routes = ['list','detail','states','spec'];
+  var links = document.querySelectorAll('.review-nav a');
+
+  function normalize(){
+    var h = (location.hash || '').replace('#','');
+    return routes.indexOf(h) >= 0 ? h : 'list';
+  }
+
+  function render(){
+    var current = normalize();
+    routes.forEach(function(r){
+      var el = document.getElementById('view-' + r);
+      if (el) el.hidden = (r !== current);
+    });
+    for (var i = 0; i < links.length; i++){
+      var a = links[i];
+      if (a.getAttribute('href') === '#' + current) a.setAttribute('aria-current','page');
+      else a.removeAttribute('aria-current');
+    }
+    var view = document.getElementById('view-' + current);
+    if (view){
+      var focusTarget = view.querySelector('[data-focus]');
+      if (focusTarget && document.activeElement !== focusTarget) focusTarget.focus({ preventScroll: true });
+    }
+    window.scrollTo(0, 0);
+  }
+
+  window.addEventListener('hashchange', render);
+  render();
+})();
+</script>
+</body>
+</html>

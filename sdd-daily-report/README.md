@@ -307,6 +307,21 @@ python main.py --serve --db other.db  # 换日报库
 `webview/app.py`（HTTP 薄壳，只做请求→视图→响应的翻译）、
 `webview/static/`（`index.html` + `app.css`，原生单页，两级：#/ 列表、#/report/<日期> 详情）。
 
+### 设计阶段留档：`design/`
+
+v1.2 的前端是用 **OpenDesign** 迭代出来的，过程留了档：
+
+| 路径 | 是什么 |
+|---|---|
+| `design/brief/` | 交给 OpenDesign 的输入（6 份材料，原样存档） |
+| `design/mock/opendesign-output.html` | OpenDesign 的产出原型（851 行、自包含、零外部依赖） |
+| `design/screenshots/` | 落地后的真实页面截图 |
+| `design/README.md` | 整条链条 + **「设计稿 → 代码」差异对照表** |
+
+关键结论（细节见 `design/README.md`）：设计稿的 36 个 design token 被逐字照搬进
+`webview/static/app.css` 的 `:root`；不落地的是设计稿里标注「评审用」的辅助块；
+6 处 `13px` 归到 `--fs-12`。取舍理由追加记录在 `specs/adrs/004-展示层技术选型.md`。
+
 ### 测试文件与书 7.5.6 的对应
 
 书的 7.5.6「Step 5 全量回归」点名了 9 个预期测试文件，本项目逐一对应：

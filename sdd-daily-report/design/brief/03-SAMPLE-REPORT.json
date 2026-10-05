@@ -1,0 +1,111 @@
+{
+  "date": "2026-08-20",
+  "team_name": "平台研发组",
+  "generated_at": "2026-08-20T18:00:12.345678",
+  "sources": {
+    "github": "ok",
+    "lark_task": "ok",
+    "lark_msg": "failed",
+    "lark_attendance": "ok"
+  },
+  "members": [
+    {
+      "name": "张三",
+      "github_username": "alice",
+      "commits": [
+        {
+          "repo": "example-org/example-repo",
+          "message": "feat: 日报三段式编排",
+          "author": "alice",
+          "timestamp": "2026-08-20T10:12:00+08:00",
+          "additions": 120,
+          "deletions": 18,
+          "files_changed": 4
+        },
+        {
+          "repo": "example-org/example-repo",
+          "message": "fix: 修复分页查询遗漏最后一页",
+          "author": "alice",
+          "timestamp": "2026-08-20T14:45:00+08:00",
+          "additions": 9,
+          "deletions": 3,
+          "files_changed": 2
+        }
+      ],
+      "tasks": [
+        {
+          "title": "日报模板评审",
+          "assignee": "alice@example.com",
+          "status_from": "进行中",
+          "status_to": "已完成",
+          "updated_at": "2026-08-20T16:30:00+08:00"
+        }
+      ],
+      "messages": [
+        {
+          "chat_name": "平台研发组",
+          "sender": "alice@example.com",
+          "content": "项目日报的推送时间定在 18:00 可以吗？",
+          "timestamp": "2026-08-20T15:20:00+08:00"
+        }
+      ],
+      "attendance": {
+        "employee_id": "alice@example.com",
+        "date": "2026-08-20",
+        "check_in": "2026-08-20T09:32:00+08:00",
+        "check_out": "2026-08-20T19:05:00+08:00",
+        "work_hours": 9.5,
+        "status": "正常"
+      }
+    },
+    {
+      "name": "李四",
+      "github_username": "bob",
+      "commits": [],
+      "tasks": [
+        {
+          "title": "GitHub 采集模块联调",
+          "assignee": "bob@example.com",
+          "status_from": "待开始",
+          "status_to": "进行中",
+          "updated_at": "2026-08-20T11:05:00+08:00"
+        }
+      ],
+      "messages": [
+        {
+          "chat_name": "平台研发组",
+          "sender": "bob@example.com",
+          "content": "这个需求我下午对一下接口契约",
+          "timestamp": "2026-08-20T13:40:00+08:00"
+        }
+      ],
+      "attendance": {
+        "employee_id": "bob@example.com",
+        "date": "2026-08-20",
+        "check_in": "2026-08-20T10:15:00+08:00",
+        "check_out": "2026-08-20T19:10:00+08:00",
+        "work_hours": 8.9,
+        "status": "迟到"
+      }
+    },
+    {
+      "name": "王五",
+      "github_username": "carol",
+      "commits": [
+        {
+          "repo": "example-org/another-repo",
+          "message": "docs: 补充部署说明",
+          "author": "carol",
+          "timestamp": "2026-08-20T17:02:00+08:00",
+          "additions": 41,
+          "deletions": 0,
+          "files_changed": 1
+        }
+      ],
+      "tasks": [],
+      "messages": [],
+      "attendance": null
+    }
+  ],
+  "markdown": "# 平台研发组工作日报 — 2026-08-20\n\n## 总览\n\n| 成员 | 代码提交 | 任务进展 | 协作沟通 |\n|---|---|---|---|\n| 张三 | 2 | 1 | 1 |\n| 李四 | 0 | 1 | 1 |\n| 王五 | 1 | 0 | 0 |\n"
+}

@@ -89,6 +89,9 @@ python main.py --serve --db 其他库.db  # 换日报库
 - `specs/contracts/data-models.md`、`specs/contracts/api-spec.yaml`：同步视图模型与枚举；
 - `specs/tasks.md` Task 12；`specs/adrs/004-展示层技术选型.md`（ADR 只追加）；
 - `webview/`：`views.py`（纯逻辑）/ `app.py`（标准库 HTTP 薄壳）/ `static/`（原生单页）。
+- `design/`：**设计阶段留档** —— 交给 OpenDesign 的输入（`brief/`）、它的产出原型
+  （`mock/opendesign-output.html`）、落地后截图，以及一份「设计稿 → 代码」差异对照表。
+  想核"这个前端到底是不是按设计稿做的"，看这一份就够。
 
 三条硬约束（`design.md` §6.5，由 `scripts/input_guard.py` 的规则 4 强制）：
 

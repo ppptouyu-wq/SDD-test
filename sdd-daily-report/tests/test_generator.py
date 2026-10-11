@@ -379,3 +379,92 @@ def test_markdown_says_unavailable_only_when_attendance_collection_failed():
     )
 
     assert template.ATTENDANCE_UNAVAILABLE in markdown
+
+
+# ---------------------------------------------------------------------------
+# Task 6 验收标准（v1.5 变更）：提交信息只呈现「标题 + 正文摘要」
+#
+# 回归背景：本项目自己的提交正文（按书图 7-8 闭环写的规范链说明）有几十行，
+# 原先 template 直接把 commit.message 整段贴进「代码提交」段，日报被撑爆。
+# 规范落点：proposal.md §3.1（v1.5）、design.md §3.3、tasks.md Task 6 v1.5。
+# ---------------------------------------------------------------------------
+
+
+def _long_message() -> str:
+    return (
+        "feat(v1.5): 收紧提交信息的呈现\n"
+        "\n"
+        "第一句说明这次改了什么。第二句说明为什么这么改。第三句收尾。\n"
+        "第四句属于正文后面，不该进日报。第五句同前。\n"
+    )
+
+
+def test_summarize_commit_keeps_subject_and_first_three_sentences():
+    subject, summary = template.summarize_commit(_long_message())
+
+    assert subject == "feat(v1.5): 收紧提交信息的呈现"
+    assert summary == "第一句说明这次改了什么。第二句说明为什么这么改。第三句收尾。"
+    assert "第四句" not in summary
+
+
+def test_summarize_commit_returns_only_subject_when_body_is_missing():
+    """GitHub 网页端上传文件产生的提交没有正文 → 摘要为空，不造占位符。"""
+    assert template.summarize_commit("Add files via upload") == (
+        "Add files via upload",
+        "",
+    )
+    # 只有空行的"正文"同样算没有正文
+    assert template.summarize_commit("chore: x\n\n\n") == ("chore: x", "")
+    assert template.summarize_commit("") == ("", "")
+
+
+def test_summarize_commit_does_not_split_on_dots_inside_identifiers():
+    """`main.py`、`v1.2`、`99992402` 里的点不是句末，不能被切碎。"""
+    message = "fix: x\n\n改动 main.py 与 v1.2 契约。第二句。"
+
+    subject, summary = template.summarize_commit(message)
+    assert subject == "fix: x"
+    assert summary == "改动 main.py 与 v1.2 契约。第二句。"
+
+    # 只取一句时也不能把 main.py 切开
+    _, first_only = template.summarize_commit(message, max_sentences=1)
+    assert first_only == "改动 main.py 与 v1.2 契约。"
+
+
+def test_summarize_commit_truncates_an_endless_sentence_at_the_char_limit():
+    """整段没有句号时的兜底：按字符截断并补省略号，别把邮件撑爆。"""
+    message = "feat: x\n\n" + "啊" * 500
+
+    _, summary = template.summarize_commit(message)
+
+    assert len(summary) == template.COMMIT_SUMMARY_MAX_CHARS + 1
+    assert summary.endswith(template.COMMIT_SUMMARY_ELLIPSIS)
+    assert summary.startswith("啊" * 10)
+
+
+def test_markdown_renders_commit_summary_under_the_subject_and_drops_the_body():
+    member = _member_with_data()
+    member.commits[0].message = _long_message()
+
+    markdown = template.render_markdown([member], DAY, "平台研发组")
+
+    assert "feat(v1.5): 收紧提交信息的呈现" in markdown
+    assert "第一句说明这次改了什么。" in markdown
+    # 完整正文不许进日报
+    assert "第四句属于正文后面" not in markdown
+    # 摘要渲染成标题下方缩进的子列表项
+    assert f"  - {template.summarize_commit(_long_message())[1]}" in markdown
+
+
+def test_markdown_to_html_renders_the_indented_commit_summary_as_a_list_item():
+    """缩进的子列表项必须变成 <li>，不能退化成 <p>（design.md §3.3 第 7 条）。"""
+    member = _member_with_data()
+    member.commits[0].message = _long_message()
+
+    markdown = template.render_markdown([member], DAY, "平台研发组")
+    html = template.markdown_to_html(markdown)
+
+    assert "<li>第一句说明这次改了什么。第二句说明为什么这么改。第三句收尾。</li>" in html
+    assert "  - 第一句" not in html
+    assert "第四句属于正文后面" not in html
+

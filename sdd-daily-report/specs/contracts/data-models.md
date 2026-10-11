@@ -9,7 +9,7 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | author | str | 是 | 提交者（GitHub 用户名） |
-| message | str | 是 | 提交信息（Commit Message） |
+| message | str | 是 | 提交信息（Commit Message，**完整原文**：标题 + 正文）。日报只呈现标题与正文摘要（前 3 句 / 200 字符上限），截断属渲染期行为，见 design.md §3.3（v1.5） |
 | timestamp | datetime | 是 | 提交时间 |
 | repo | str | 是 | 仓库名称 |
 | additions | int | 是 | 新增行数 |

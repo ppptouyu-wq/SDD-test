@@ -61,7 +61,7 @@
    | ② 真实 GitHub 仓库（2026-04-24，不推送） | 拉真实提交 |
    | ③ 健康检查（--check） | 逐项检查配置 |
    | ④ 今天（真实推送，慎用） | 会真的发邮件/推飞书 |
-   | ⑤ 跑全部测试（pytest） | 351 个用例 |
+   | ⑤ 跑全部测试（pytest） | 357 个用例 |
    | ⑥ 只跑当前打开的测试文件 | 调试单个用例 |
    | ⑦ 展示页：本地只读查看已生成的日报 | 起本地网页看日报（v1.2 新增） |
 
@@ -333,7 +333,7 @@ v1.2 的前端是用 **OpenDesign** 迭代出来的，过程留了档：
 | `tests/test_lark_task.py` | 7 | 飞书任务采集 |
 | `tests/test_lark_msg.py` | 13 | 飞书群消息采集（关键词过滤 + 敏感词剔除） |
 | `tests/test_attendance.py` | 12 | 飞书考勤采集（v1.1 新增） |
-| `tests/test_generator.py` | 19 | 日报生成（含 v1.1 考勤逻辑、v1.3 双 ID 身份映射与「今日无记录」渲染） |
+| `tests/test_generator.py` | 25 | 日报生成（含 v1.1 考勤逻辑、v1.3 双 ID 身份映射与「今日无记录」渲染、v1.5 提交摘要截断） |
 | `tests/test_email.py` | 7 | SMTP 推送 |
 | `tests/test_lark_bot.py` | 8 | 飞书机器人推送 |
 | `tests/test_main.py` | 21 | `main.py` 入口：编排、`load_dotenv`、`load_tasks_file`、CLI 退出码、路径锚定、v1.3 考勤名单接线、v1.4 仅工作日开关默认关闭 |
@@ -374,7 +374,7 @@ python -m pytest tests/ -v
    `_attendance_user_ids()`（从 `members[].lark_employee_id` 去重取名单）；
    `formatter.aggregate()` 增加 `by_lark_employee` 映射（空 ID 不入表）；
    `template.render_markdown()` 的考勤分支由两段变三段。
-6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.4 后为 351），规范与代码一起提交（书图 7-8 的闭环要求）。
+6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.5 后为 357），规范与代码一起提交（书图 7-8 的闭环要求）。
 
 真实跑通的证据（2026-10-09 那次）：日志从
 `飞书考勤采集失败 error: ... employeeNos is empty` 变成
@@ -404,6 +404,37 @@ python -m pytest tests/ -v
 真实跑通的证据：`python main.py --date 2026-10-11 --no-push`（**周日**）退出码 0，
 `日报生成完成：2026-10-11，成员 2 人`；加上 `--working-days-only` 则打印
 `[calendar] 2026-10-11 是非工作日，跳过日报生成（--working-days-only 已开启；…）` 并返回 0。
+
+## v1.5 迭代：日报里的提交信息只留「标题 + 两三句摘要」（起点在 proposal）
+
+需求原话是"代码提交后面加上我每次让你迭代出来的新功能的描述，描述务必要简单，
+争取两三句话就完事"。判定依据：日报**呈现什么内容**属于产品行为 → **需求变更** →
+起点 `proposal.md`，一路往下（design → contracts → tasks → 代码 → 测试）。
+
+背后暴露的真实问题：本项目自己的提交正文（按书图 7-8 闭环写的规范链说明）有几十行，
+`template.py` 原本把 `CommitRecord.message` **整段原文**贴进「代码提交」段，
+一条提交就能把邮件撑成一屏半，收件人根本读不下去。
+
+| 层 | 改了什么 |
+|---|---|
+| `proposal.md` §3.1 | 新增两条验收标准：① 只呈现"标题 + 正文摘要"，不得原样贴入整段正文；② 正文为空时只显示标题（验收项 29 → 31） |
+| `design.md` §3.3 | 新增"提交信息在日报里的呈现"，把规则钉死：标题 = 第一行原文；摘要 = 正文首个非空段落的前 3 句、上限 200 字符；正文为空则摘要为空串；**截断只发生在渲染期**，落库仍是完整原文 |
+| `design.md` §4 | 生成层接口新增 `template.summarize_commit(message, *, max_sentences=3, max_chars=200) -> tuple[str, str]` |
+| `contracts/` | `data-models.md` 与 `api-spec.yaml` 的 `message` 说明补上"完整原文 + 渲染期截断"，api 版本 `1.5.0` |
+| `tasks.md` | Task 6 补 5 条 v1.5 验收标准（含"完整正文不得出现在结果里""子列表项必须渲染成 `<li>`"） |
+| 代码 | `template.py` 新增 `_first_paragraph()` / `_take_sentences()` / `summarize_commit()`；「代码提交」段改为"标题 + 缩进子列表项摘要"；`markdown_to_html()` 学会识别缩进列表项 |
+| 测试 | `test_generator.py` 新增 6 条（19 → 25）：截前 3 句、无正文、`main.py` / `v1.2` 不被点号切碎、200 字符兜底、完整正文不进日报、缩进项变 `<li>` |
+
+**这不是"AI 总结"**：截句是纯文本规则——只做"取第几段、取前几句、超长截断"，
+不改写也不概括内容。同一份提交每次都渲染出同样的结果，所以能被测试钉住。
+
+真实跑通的证据：同一份 2026-10-11 日报，改前「代码提交」段贴了 v1.4 那条提交的 40 多行正文；
+改后是
+
+```text
+- `ppptouyu-wq/SDD-test` feat(v1.4): 日报不再仅限工作日，双休日与节假日照常生成 （+221/-38，17 个文件）
+  - 需求变更（按书里的变更起点规则，起点在 proposal，不在代码）： 「打卡生成周报不要仅限工作日，让双休日、节假日也可以正常运行」。
+```
 
 ## 工程化配套（第 3、8、9 章）
 

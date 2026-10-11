@@ -2,7 +2,7 @@ openapi: 3.0.3
 
 info:
   title: 智能日报生成器 — 接口契约（api-spec.yaml）
-  version: 1.4.0
+  version: 1.5.0
   description: |
     本书 SDD 六阶段工作流【阶段三：接口契约】的产物之一（与 data-models.md 配套）。
 
@@ -110,7 +110,7 @@ components:
           description: 提交者（GitHub 用户名）
         message:
           type: string
-          description: 提交信息（Commit Message）
+          description: 提交信息（Commit Message，完整原文：标题 + 正文）。日报只呈现标题与正文摘要（前 3 句 / 200 字符上限，见 design.md §3.3，v1.5）
         timestamp:
           type: string
           format: date-time

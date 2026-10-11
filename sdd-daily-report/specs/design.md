@@ -269,6 +269,16 @@ webview.serve(
     host: str = "127.0.0.1",           # 只允许本机回环地址
     port: int = 8000                   # 本机端口
 ) -> int                               # 启动只读 HTTP 服务（阻塞）；返回进程退出码 0=正常停止，2=启动失败
+
+# 编排层接口（v1.4 变更）
+main.run(
+    config: AppConfig,
+    *, day: date | None = None,        # 日报日期，缺省取当天
+    mock: bool = False,                # 使用内置演示数据
+    push: bool = True,                 # 是否真实推送
+    tasks_file: str | None = None,     # 手动任务数据文件
+    working_days_only: bool = False    # 仅工作日运行；默认 False = 每天都能跑
+) -> dict                              # 执行摘要
 ```
 
 字段级契约见 `specs/contracts/data-models.md`；HTTP 端点契约见 `specs/contracts/api-spec.yaml` 的 `paths`。
@@ -389,6 +399,22 @@ webview.serve(
 `json`）与静态 HTML/CSS 实现，不得引入 Web 框架、不得要求构建步骤（ADR-004）。
 理由是 `proposal.md` 技术约束要求"复用团队现有技术栈"，而 Cron 定时链路
 （采集→生成→推送）的依赖集合不应被展示页扩大。
+
+### 6.6 触发时机与运行日期（v1.4 需求变更新增）
+
+**(1) 默认每个自然日都能跑**：日报生成不设日期门槛。周末与配置的法定节假日
+同样会采集、生成、推送。原因是"今天该不该发日报"是**调度策略**，
+不是**产品能力** —— 把调度策略写死进产品，会让补跑、演练、值班日报
+（例如周末线上值班也需要日报）全部无法进行。
+
+**(2) 仅工作日模式是显式选项**：`main.py --working-days-only` 才启用
+`shared/calendar.is_working_day()` 判断，命中非工作日时抛
+`NonWorkingDayError`，由 `main()` 捕获、记录日志、打印跳过原因并返回 0
+（跳过不是失败）。
+
+**(3) `holidays` 配置的含义随之收窄**：`report.holidays` 只在"仅工作日模式"下
+生效；默认模式下填了也不会跳过。这一点必须写进配置模板的注释，
+否则使用者会以为"填了节假日就一定会跳过"。
 
 **(4) 视觉同源（设计令牌）**：本复现的展示层视觉不是临时配色，而是采用
 OpenDesign 的 `ant` 设计系统（企业级、数据密集）的令牌值，机器可读原件为

@@ -242,17 +242,68 @@ def test_all_sources_failed_does_not_generate_empty_report(config, monkeypatch):
     assert row is None           # 没有落库
 
 
+def test_weekend_runs_by_default(config, monkeypatch):
+    """v1.4：默认不判断工作日 —— 周六照常采集、生成、推送。
+
+    回归背景：老实现无条件调用 `is_working_day()`，导致周末跑不出日报，
+    连"补跑"和"值班日报"都做不了。现在只有显式 `working_days_only=True` 才跳过。
+    """
+    _wire_all_sources(monkeypatch, config)
+
+    with ReportStorage(config.storage_path) as storage:
+        pushed = {}
+
+        def email_send(report, recipients, *, config, smtp_factory=None):  # noqa: ANN001
+            pushed["email"] = report
+            return True
+
+        def bot_send(report, chat_id, *, config, **kw):  # noqa: ANN001
+            pushed["lark_bot"] = report
+            return True
+
+        monkeypatch.setattr(app.email_notifier, "send", email_send)
+        monkeypatch.setattr(app.lark_bot, "send", bot_send)
+
+        summary = app.run(config, day=SATURDAY, storage=storage)
+
+        assert summary["status"] == "ok"
+        assert pushed.get("email") is not None, "周六默认也要推送"
+        assert storage.get(SATURDAY) is not None, "周六必须落库"
+
+
+def test_holiday_is_not_skipped_unless_working_days_only(config, monkeypatch):
+    """v1.4：`report.holidays` 只在"仅工作日"模式下生效。
+
+    否则使用者会以为"填了节假日就一定会跳过"，实际上默认模式照常生成。
+    """
+    _wire_all_sources(monkeypatch, config)
+    from dataclasses import replace
+
+    holiday_config = replace(
+        config, report=replace(config.report, holidays=[DAY.isoformat()])
+    )
+
+    with ReportStorage(config.storage_path) as storage:
+        # 默认：节假日照常生成
+        assert app.run(holiday_config, day=DAY, storage=storage)["status"] == "ok"
+        # 显式开启后才跳过
+        with pytest.raises(NonWorkingDayError):
+            app.run(
+                holiday_config, day=DAY, storage=storage, working_days_only=True
+            )
+
+
 def test_non_working_day_is_skipped(config, monkeypatch):
-    """识别非工作日（周末）并跳过日报生成。"""
+    """显式开启"仅工作日"时，配置的法定节假日照旧跳过（老行为被保留为开关）。"""
     _wire_all_sources(monkeypatch, config)
 
     with ReportStorage(config.storage_path) as storage:
         with pytest.raises(NonWorkingDayError):
-            app.run(config, day=SATURDAY, storage=storage)
+            app.run(config, day=SATURDAY, storage=storage, working_days_only=True)
 
 
 def test_holiday_from_config_is_skipped(config, monkeypatch):
-    """配置的法定节假日同样跳过。"""
+    """显式开启"仅工作日"时，配置的法定节假日同样跳过。"""
     _wire_all_sources(monkeypatch, config)
     from dataclasses import replace
 
@@ -262,7 +313,9 @@ def test_holiday_from_config_is_skipped(config, monkeypatch):
 
     with ReportStorage(config.storage_path) as storage:
         with pytest.raises(NonWorkingDayError):
-            app.run(holiday_config, day=DAY, storage=storage)
+            app.run(
+                holiday_config, day=DAY, storage=storage, working_days_only=True
+            )
 
 
 def test_actionable_summary_reports_elapsed_and_sources(config, monkeypatch):

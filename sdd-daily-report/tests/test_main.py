@@ -392,3 +392,40 @@ members:
 
     assert app._attendance_user_ids(config) == []
 
+
+def test_working_days_only_is_off_by_default():
+    """v1.4：默认必须在任意日期都能运行，只有显式开关才跳过非工作日。
+
+    这条同时钉住 `run()` 的关键字默认值 —— 任何既有调用方（含展示页链路与
+    本仓其它测试）升级后行为必须是"每天都跑"，而不是悄悄退回"仅工作日"。
+    """
+    import inspect
+
+    parser = app.build_parser()
+
+    assert parser.parse_args([]).working_days_only is False
+    assert parser.parse_args(["--working-days-only"]).working_days_only is True
+    signature = inspect.signature(app.run)
+    assert signature.parameters["working_days_only"].default is False
+
+
+def test_non_working_day_prints_the_reason_when_skipped(tmp_dir, config, monkeypatch, capsys):
+    """开启"仅工作日"而命中周末时：打印跳过原因并返回 0（跳过不是失败）。"""
+    project = tmp_dir / "proj"
+    project.mkdir()
+    config_path = project / "config.yaml"
+    config_path.write_text(_minimal_yaml(config), encoding="utf-8")
+
+    def boom(*args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        raise AssertionError("仅工作日模式下不应进入采集阶段")
+
+    monkeypatch.setattr(app, "collect_all", boom)
+
+    # 2026-08-22 是周六
+    code = app.main(["--config", str(config_path), "--date", "2026-08-22", "--working-days-only", "--no-push"])
+
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "2026-08-22" in out
+    assert "--working-days-only" in out
+

@@ -137,6 +137,7 @@ def run(
     mock: bool = False,
     push: bool = True,
     tasks_file: str | None = None,
+    working_days_only: bool = False,
     storage: ReportStorage | None = None,
     notifiers: dict | None = None,
 ) -> dict:
@@ -148,8 +149,10 @@ def run(
         extra={"source": "main", "date": target_day.isoformat(), "mock": mock},
     )
 
-    # 边界场景：识别非工作日并跳过（proposal.md §3.3）
-    if not is_working_day(target_day, config.report.holidays):
+    # v1.4：默认**不判断工作日** —— "今天该不该发日报"是调度策略，不是产品能力。
+    # 双休日/节假日同样采集、生成、推送（design.md §6.6）。只有显式要求
+    # "仅工作日"时才走这段判断（proposal.md §3.3 v1.4）。
+    if working_days_only and not is_working_day(target_day, config.report.holidays):
         raise NonWorkingDayError(target_day.isoformat())
 
     results = collect_all(config, target_day, mock=mock, tasks_file=tasks_file)
@@ -450,6 +453,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-push", dest="push", action="store_false", help="只生成不推送"
     )
     parser.set_defaults(push=None)
+    parser.add_argument(
+        "--working-days-only",
+        action="store_true",
+        help="仅工作日运行（v1.4）：周末或 config.yaml 中 holidays 命中的日期跳过。"
+        "默认不开启，即双休日与节假日照常生成并推送",
+    )
     return parser
 
 
@@ -525,10 +534,14 @@ def main(argv: list[str] | None = None) -> int:
             mock=args.mock,
             push=push,
             tasks_file=args.tasks_file,
+            working_days_only=args.working_days_only,
         )
     except NonWorkingDayError as exc:
-        logger.info("跳过日报生成", extra={"source": "main", "reason": str(exc)})
-        print(str(exc))
+        logger.info(
+            "跳过日报生成",
+            extra={"source": "main", "reason": str(exc), "working_days_only": True},
+        )
+        print(f"{exc}（--working-days-only 已开启；去掉该参数即可在任意日期运行）")
         return 0
     except DailyReportError as exc:
         logger.error("日报流程失败", extra={"source": "main", "error": str(exc)})

@@ -47,8 +47,8 @@
 **写入时机**（`main.py:113-177`）：采集 → 聚合 → 生成 → **写库（`store.save`，第 151 行）
 → 之后才推送**。所以推送失败时数据库里照样有这条记录。
 
-三种情况**根本不写库**：① 非工作日直接返回；② 所有数据源都失败（不生成空日报）；
-③ `--check` 健康检查模式。
+三种情况**根本不写库**：① 加了 `--working-days-only` 且当天是周末/节假日（v1.4 起默认
+不跳过，双休日与节假日照常生成）；② 所有数据源都失败（不生成空日报）；③ `--check` 健康检查模式。
 
 终端里那几行 JSON 是**日志**（走 stderr），不是结果。日报**不生成 md / html 文件**。
 
@@ -114,11 +114,11 @@ python main.py --serve --db 其他库.db  # 换日报库
 
 | 目录 | 内容 | 测试 |
 |---|---|---|
-| `sdd-daily-report/` | **主项目**「智能日报生成器」（第 4-7 章）。含 Agent 设计模式、团队实践与度量、适用性自评、Harness 审计、本地只读展示页（v1.2 迭代）、飞书双 ID 考勤接线（v1.3 迭代） | 347 通过 |
+| `sdd-daily-report/` | **主项目**「智能日报生成器」（第 4-7 章）。含 Agent 设计模式、团队实践与度量、适用性自评、Harness 审计、本地只读展示页（v1.2 迭代）、飞书双 ID 考勤接线（v1.3 迭代）、默认每天可跑（v1.4 迭代） | 351 通过 |
 | `kb-search/` | **案例项目**「知识库语义搜索工具」（第 1-2 章） | 109 通过、1 跳过 |
 | `brownfield-demo/` | **Brownfield 四步法**演示（第 7.4 节） | 50 通过 |
 
-合计 **506 个测试**。一键运行：
+合计 **510 个测试**。一键运行：
 
 ```bash
 python run_all_tests.py     # 需先安装 pytest
@@ -199,7 +199,8 @@ push = (not args.mock) if args.push is None else args.push
 
 **能真正发出去，还需四个条件全部满足**：
 
-1. 当天是**工作日**——周末/节假日 `main.py:121` 直接返回，连采集都没开始；
+1. 日期**不被跳过**——v1.4 起默认任何日期都跑（含周末、节假日）；只有显式加了
+   `--working-days-only` 才会在非工作日提前返回（那时会在终端打印跳过原因）；
 2. **至少一个数据源成功**——全失败则不生成日报，提前返回（`main.py:127-135`）；
 3. 判定为要推送（上表）；
 4. **凭据齐备**——见下一节。
@@ -290,8 +291,8 @@ python -m pytest tests/ -v
 | `tests/test_generator.py`（含新考勤逻辑） | ✅ | 19 |
 | `tests/test_email.py` | ✅ | 7 |
 | `tests/test_lark_bot.py` | ✅ | 8 |
-| `tests/test_main.py` | ✅ | 19 |
-| `tests/test_integration.py` | ✅ | 10 |
+| `tests/test_main.py` | ✅ | 21 |
+| `tests/test_integration.py` | ✅ | 12 |
 
 除书列的 9 个之外，本复现为第 8~10 章的 Agent 设计模式与治理层另建了
 10 个测试文件（`test_agents.py` 26、`test_team_practice.py` 32、`test_contracts.py` 30、

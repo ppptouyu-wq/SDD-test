@@ -58,7 +58,7 @@ report:
     - "绩效"
     - "裁员"
     - "期权"
-  # 法定节假日：命中则跳过日报生成（proposal.md §3.3）
+  # 法定节假日：只有加 --working-days-only 时才生效（v1.4 起默认每天都生成日报）
   holidays: []
 
 storage_path: "data/reports.db"

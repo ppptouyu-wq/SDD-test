@@ -65,9 +65,11 @@ class StorageError(DailyReportError):
 
 
 class NonWorkingDayError(DailyReportError):
-    """非工作日（周末及法定节假日）——用于跳过日报生成。
+    """非工作日（周末及法定节假日）——用于**显式开启"仅工作日"时**跳过日报生成。
 
-    对应 proposal.md §3.3 边界场景："系统需要识别非工作日……并自动跳过日报生成"。
+    对应 proposal.md §3.3 边界场景（v1.4 收窄）：默认模式下不判断工作日，
+    每天都在任意日期生成日报；只有 `--working-days-only` 才走这条路径
+    （design.md §6.6）。`is_working_day()` 本身仍可用于其它判断。
     """
 
     def __init__(self, day: str) -> None:

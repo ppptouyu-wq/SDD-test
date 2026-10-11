@@ -47,9 +47,9 @@ sdd-daily-report/
 
 ## 当前状态
 
-- 版本：v1.3（v1.2 基础上把飞书考勤接上：成员身份映射拆成 `lark`（open_id）+
-  `lark_employee_id`（员工ID），并按 `specs/tasks.md` Task 6 的 v1.3 验收标准
-  区分"今日无记录"与"考勤数据暂不可用"）
+- 版本：v1.4（在 v1.3 基础上取消默认的非工作日跳过：`main.run(working_days_only=False)`
+  默认每天都能跑，周末/节假日照常采集→生成→推送；旧行为保留为显式 `--working-days-only`，
+  起点在 `specs/proposal.md` §3.3，见 `specs/design.md` §6.6）
 - 任务进度：Task 1 ~ Task 12 全部完成
 - 测试：`python -m pytest` 全绿
 - 本地演练：`python main.py --config config.yaml --date 2026-08-20 --mock`

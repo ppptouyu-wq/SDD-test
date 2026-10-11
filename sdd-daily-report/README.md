@@ -12,7 +12,7 @@
 | 结果在哪 | `data/reports.db`，表 `daily_reports`，一天一条（`report_date` 主键，重跑覆盖） |
 | 存了什么 | 每条记录含 `markdown`（Markdown 日报）、`html`（邮件正文）、`payload`（结构化 JSON）三份 |
 | 什么时候写 | 采集 → 聚合 → 生成 → **写库（`main.py:151`）→ 之后才推送**。推送失败照写 |
-| 什么时候不写 | ① 非工作日直接返回；② 所有数据源都失败（不生成空日报）；③ `--check` 模式 |
+| 什么时候不写 | ① 加了 `--working-days-only` 且当天是周末/节假日（v1.4 起默认**不**跳过，双休日节假日照常生成）；② 所有数据源都失败（不生成空日报）；③ `--check` 模式 |
 | 终端那几行是什么 | **日志**（JSON 走 stderr），不是结果 |
 | 会生成 md/html 文件吗 | **不会**。`--push` 时邮件进对方邮箱、消息进飞书群，本地不留副本 |
 | 会上传吗 | `data/` 被 `.gitignore` 忽略，**不会** |
@@ -61,7 +61,7 @@
    | ② 真实 GitHub 仓库（2026-04-24，不推送） | 拉真实提交 |
    | ③ 健康检查（--check） | 逐项检查配置 |
    | ④ 今天（真实推送，慎用） | 会真的发邮件/推飞书 |
-   | ⑤ 跑全部测试（pytest） | 347 个用例 |
+   | ⑤ 跑全部测试（pytest） | 351 个用例 |
    | ⑥ 只跑当前打开的测试文件 | 调试单个用例 |
    | ⑦ 展示页：本地只读查看已生成的日报 | 起本地网页看日报（v1.2 新增） |
 
@@ -142,6 +142,7 @@ VS Code 里把 `.env.example` 复制成 `.env` 填好即可，`launch.json` 的�
 | `--tasks-file <路径>` | 从 JSON 文件读任务数据（飞书 API 不可用时的兜底，见下） |
 | `--check` | 健康检查，不生成日报 |
 | `--push` / `--no-push` | 强制推送 / 强制不推送 |
+| `--working-days-only` | 仅工作日运行（v1.4）：周末或 `report.holidays` 命中的日期跳过生成并打印原因。**默认不开启**，即双休日、节假日照常生成并推送 |
 | `--serve` | 启动本地只读展示页（v1.2），不采集、不生成、不推送 |
 | `--port <n>` | 展示页端口，默认 8000（仅与 `--serve` 同用） |
 | `--db <路径>` | 展示页读的日报库，默认取 `config.yaml` 的 `storage_path`，缺失时用 `data/reports.db`（仅与 `--serve` 同用） |
@@ -188,11 +189,11 @@ python check_email.py
 | 现象 | 原因 |
 |---|---|
 | `ModuleNotFoundError: No module named 'shared'` | `python -m pytest` 没在本目录下运行。直接跑 `main.py` 已不受工作目录影响（入口路径锚在项目根），但三个子项目有同名顶层包，pytest 仍要在各自目录里跑 |
-| `…是非工作日，跳过日报生成` | 日期落在周末或配置的节假日，属预期行为（proposal.md §3.3） |
+| `…是非工作日，跳过日报生成` | 只会在显式加了 `--working-days-only` 时出现；去掉该参数即可在任意日期运行（v1.4，见 design.md §6.6） |
 | 运行成功但 0 条记录 | 该日期的采集窗口内确实没有提交，换 `--date` |
 | 飞书报"凭据缺失" | 正常：未配 `LARK_APP_ID/SECRET`，日报会标注"数据获取失败"，其余数据源照常 |
 | 邮件报"发送失败" | 未设 `SMTP_PASSWORD`，或用的不是 SMTP 授权码（QQ 登录密码不可用） |
-| 直接运行 `main.py` 不带参数 | 会跑"今天 + 真实推送"，且当天若是周末会直接跳过 |
+| 直接运行 `main.py` 不带参数 | 会跑"今天 + 真实推送"；v1.4 起周末与节假日同样会跑（想恢复旧行为加 `--working-days-only`） |
 
 ## 架构
 
@@ -335,8 +336,8 @@ v1.2 的前端是用 **OpenDesign** 迭代出来的，过程留了档：
 | `tests/test_generator.py` | 19 | 日报生成（含 v1.1 考勤逻辑、v1.3 双 ID 身份映射与「今日无记录」渲染） |
 | `tests/test_email.py` | 7 | SMTP 推送 |
 | `tests/test_lark_bot.py` | 8 | 飞书机器人推送 |
-| `tests/test_main.py` | 19 | `main.py` 入口：编排、`load_dotenv`、`load_tasks_file`、CLI 退出码、路径锚定、v1.3 考勤名单接线 |
-| `tests/test_integration.py` | 10 | 端到端集成：全链路、单源失败不阻塞、非工作日跳过 |
+| `tests/test_main.py` | 21 | `main.py` 入口：编排、`load_dotenv`、`load_tasks_file`、CLI 退出码、路径锚定、v1.3 考勤名单接线、v1.4 仅工作日开关默认关闭 |
+| `tests/test_integration.py` | 12 | 端到端集成：全链路、单源失败不阻塞、v1.4 周末/节假日默认照常生成 |
 
 另有 10 个测试文件覆盖第 8~10 章的 Agent 设计模式与治理层（书里未规定文件清单）：
 `test_agents.py`、`test_team_practice.py`、`test_contracts.py`、`test_framework.py`、
@@ -373,12 +374,36 @@ python -m pytest tests/ -v
    `_attendance_user_ids()`（从 `members[].lark_employee_id` 去重取名单）；
    `formatter.aggregate()` 增加 `by_lark_employee` 映射（空 ID 不入表）；
    `template.render_markdown()` 的考勤分支由两段变三段。
-6. **全量回归 + 同一 commit**：`347 passed`，规范与代码一起提交（书图 7-8 的闭环要求）。
+6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.4 后为 351），规范与代码一起提交（书图 7-8 的闭环要求）。
 
 真实跑通的证据（2026-10-09 那次）：日志从
 `飞书考勤采集失败 error: ... employeeNos is empty` 变成
 `飞书考勤采集完成 count 0` / `success: true`，日报里两个成员的考勤段都渲染成
 「- 今日无记录」——**"没打卡"与"取不到数据"从此在文书上不再混为一谈**。
+
+## v1.4 迭代：日报不再只限工作日（起点在 proposal，不在代码）
+
+需求原话是"打卡生成周报不要仅限工作日，让双休日、节假日也可以正常运行"。按书里的
+**变更起点规则**（`extract/chunk_11.md:237-246`）判定：这改变的是"产品做什么"，
+属**需求变更** → 起点是 `proposal.md`，一路往下（design → contracts → tasks → 代码 → 测试）。
+
+| 层 | 改了什么 |
+|---|---|
+| `proposal.md` §2.1 | "每个工作日 18:00 自动触发" → "由调度器按需触发；**产品本身不限制生成日期**" |
+| `proposal.md` §3.3 | 原"识别非工作日并自动跳过"**拆成两条**：① 双休日/节假日照常生成；② 只有显式 `--working-days-only` 才跳过（验收项 28 → 29） |
+| `design.md` §4 / §6.6 | `main.run(..., working_days_only: bool = False)`；新增"触发时机与运行日期"一节，写明默认不判断工作日、跳过时返回 0（**跳过不是失败**） |
+| `contracts/api-spec.yaml` | 版本 `1.4.0`；`holidays` 的语义收窄为"仅 `--working-days-only` 下生效" |
+| `tasks.md` | Task 9 补 4 条 v1.4 验收标准（含"`run()` 默认值必须是 `False`"） |
+| 代码 | `main.py` 的门槛由 `if not is_working_day(...)` 改为 `if working_days_only and not is_working_day(...)`；新增 `--working-days-only`；`calendar.py` / `errors.py` 的 docstring 同步收窄措辞 |
+| 测试 | 新增周六默认跑通、节假日默认不跳过两条集成测试；`test_main.py` 新增"开关默认关闭"与"跳过时打印原因"两条 |
+
+**设计取舍**：旧能力没删，改成了开关。理由是"今天该不该发日报"属于**调度策略**，
+不是产品能力——写死进产品会让补跑、演练、值班日报都做不了。想恢复旧行为就加
+`--working-days-only`。
+
+真实跑通的证据：`python main.py --date 2026-10-11 --no-push`（**周日**）退出码 0，
+`日报生成完成：2026-10-11，成员 2 人`；加上 `--working-days-only` 则打印
+`[calendar] 2026-10-11 是非工作日，跳过日报生成（--working-days-only 已开启；…）` 并返回 0。
 
 ## 工程化配套（第 3、8、9 章）
 

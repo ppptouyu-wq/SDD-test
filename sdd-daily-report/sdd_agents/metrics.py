@@ -179,6 +179,10 @@ _KEYWORD_MAP: list[tuple[str, tuple[str, ...]]] = [
     ("倒序", ("descending", "order", "sort", "date_desc")),
     ("未记录", ("unknown", "unrecorded", "sources_empty", "status")),
     ("导出", ("export", "download")),
+    # ---- v1.4 触发时机词条（默认不判断工作日，硬编码日期门槛被拿掉）----
+    ("不判断工作日", ("working_days_only", "weekend", "holiday", "saturday", "sunday")),
+    ("仅工作日", ("working_days_only", "weekend", "holiday", "skip")),
+    ("照常生成", ("working_days_only", "weekend", "holiday", "default")),
 ]
 
 

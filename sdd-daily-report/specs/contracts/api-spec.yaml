@@ -2,7 +2,7 @@ openapi: 3.0.3
 
 info:
   title: 智能日报生成器 — 接口契约（api-spec.yaml）
-  version: 1.3.0
+  version: 1.4.0
   description: |
     本书 SDD 六阶段工作流【阶段三：接口契约】的产物之一（与 data-models.md 配套）。
 
@@ -497,7 +497,9 @@ components:
             holidays:
               type: array
               items: { type: string, format: date }
-              description: 法定节假日，命中则跳过日报生成（proposal.md §3.3）
+              description: >-
+                法定节假日。仅在"仅工作日"模式（--working-days-only）下命中跳过；
+                默认模式每天都生成日报，填了也不会跳过（v1.4 变更，见 design.md §6.6）
 
 # =====================================================================
 # 模块级接口契约（design.md §4 的机器可读版本）

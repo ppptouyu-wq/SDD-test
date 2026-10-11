@@ -61,7 +61,7 @@
    | ② 真实 GitHub 仓库（2026-04-24，不推送） | 拉真实提交 |
    | ③ 健康检查（--check） | 逐项检查配置 |
    | ④ 今天（真实推送，慎用） | 会真的发邮件/推飞书 |
-   | ⑤ 跑全部测试（pytest） | 357 个用例 |
+   | ⑤ 跑全部测试（pytest） | 358 个用例 |
    | ⑥ 只跑当前打开的测试文件 | 调试单个用例 |
    | ⑦ 展示页：本地只读查看已生成的日报 | 起本地网页看日报（v1.2 新增） |
 
@@ -333,7 +333,7 @@ v1.2 的前端是用 **OpenDesign** 迭代出来的，过程留了档：
 | `tests/test_lark_task.py` | 7 | 飞书任务采集 |
 | `tests/test_lark_msg.py` | 13 | 飞书群消息采集（关键词过滤 + 敏感词剔除） |
 | `tests/test_attendance.py` | 12 | 飞书考勤采集（v1.1 新增） |
-| `tests/test_generator.py` | 25 | 日报生成（含 v1.1 考勤逻辑、v1.3 双 ID 身份映射与「今日无记录」渲染、v1.5 提交摘要截断） |
+| `tests/test_generator.py` | 26 | 日报生成（含 v1.1 考勤逻辑、v1.3 双 ID 身份映射与「今日无记录」渲染、v1.5 提交摘要截断与条目分组） |
 | `tests/test_email.py` | 7 | SMTP 推送 |
 | `tests/test_lark_bot.py` | 8 | 飞书机器人推送 |
 | `tests/test_main.py` | 21 | `main.py` 入口：编排、`load_dotenv`、`load_tasks_file`、CLI 退出码、路径锚定、v1.3 考勤名单接线、v1.4 仅工作日开关默认关闭 |
@@ -374,7 +374,7 @@ python -m pytest tests/ -v
    `_attendance_user_ids()`（从 `members[].lark_employee_id` 去重取名单）；
    `formatter.aggregate()` 增加 `by_lark_employee` 映射（空 ID 不入表）；
    `template.render_markdown()` 的考勤分支由两段变三段。
-6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.5 后为 357），规范与代码一起提交（书图 7-8 的闭环要求）。
+6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.5.1 后为 358），规范与代码一起提交（书图 7-8 的闭环要求）。
 
 真实跑通的证据（2026-10-09 那次）：日志从
 `飞书考勤采集失败 error: ... employeeNos is empty` 变成
@@ -435,6 +435,23 @@ python -m pytest tests/ -v
 - `ppptouyu-wq/SDD-test` feat(v1.4): 日报不再仅限工作日，双休日与节假日照常生成 （+221/-38，17 个文件）
   - 需求变更（按书里的变更起点规则，起点在 proposal，不在代码）： 「打卡生成周报不要仅限工作日，让双休日、节假日也可以正常运行」。
 ```
+
+### v1.5.1：把提交条目在 HTML 里拍平的呈现缺陷修掉
+
+v1.5 上线后收件人反馈"几条提交挨在一起，容易看串"。查下来不是间距问题，是**渲染缺陷**：
+`markdown_to_html()` 把所有 `- ` 项（无论缩进与否）都拍平成同一个 `<ul>` 下的同级 `<li>`，
+于是 design.md §3.3 第 7 条要求的"标题下方**缩进**的子列表项"在 HTML 里根本看不出缩进——
+摘要和提交标题长得一样平。按书图 7-8 判定：这是**规范与实现没对齐**（规范要求缩进，实现抹平了），
+所以回溯收紧了 `design.md` §3.3 第 7/8 条与 `tasks.md` Task 6 的验收标准，再改代码。
+
+| 层 | 改了什么 |
+|---|---|
+| `design.md` §3.3 | 第 7 条明确"必须是**嵌在父 `<li>` 内部的嵌套 `<li>`**，不能拍平成同级项"；新增第 8 条"相邻提交之间必须一眼可分：顶层条目有间距、摘要相对标题缩进且弱化字色" |
+| `tasks.md` Task 6 | 原"渲染成 `<li>`"细化为"渲染成嵌套的 `<li>`"；新增一条"相邻提交在 HTML 里有明确视觉分隔，收件人不会看串"（tasks 验收项 92 → 93） |
+| 代码 | `generator/template.py` 的 `markdown_to_html()` 改为**保序写出开始标签**：顶层项先写 `<li>…`，遇到缩进项就把 `<ul class="sub">` 嵌进父项内部，父项在子列表之后才 `</li>`；CSS 增加 `ul > li { margin-top: 10px }`（条目间距）与 `ul.sub > li { margin-top: 4px; color: #57606a }`（摘要缩进 + 弱化字色） |
+| 测试 | 新增 `test_html_keeps_each_commit_visually_separated`：两条提交各带摘要时必须各自成顶层项、摘要嵌在自己父项内、顶层只有 1 个 `<ul>`、2 个 `<ul class="sub">` |
+
+想恢复"摘要不缩进"的样子就去掉 `ul.sub` 那两条 CSS —— 但嵌套结构不能退，它是对契约的兑现。
 
 ## 工程化配套（第 3、8、9 章）
 

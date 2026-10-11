@@ -217,14 +217,27 @@ def markdown_to_html(markdown: str) -> str:
     以保证输出"可被浏览器正确渲染"且不引入额外依赖。
 
     提交摘要渲染成标题下方**缩进的子列表项**（design.md §3.3），因此这里按
-    "去掉前导空白后以 `- ` 开头"来识别列表项，子项与顶层项都渲染成 ``<li>``。
+    "去掉前导空白后以 `- ` 开头"来识别列表项；**缩进 ≥2 空格的项会嵌套进父 `<li>`**
+    （不能拍平成同级项，否则收件人分不清哪句摘要属于哪条提交，见 design.md §3.3 第 7 条）。
     """
     html: list[str] = []
     in_list = False
+    in_sub = False
     in_table = False
+    item_open = False  # 顶层 <li> 已写出开始标签、还没写 </li>
+
+    def close_item() -> None:
+        nonlocal item_open, in_sub
+        if in_sub:
+            html.append("</ul>")
+            in_sub = False
+        if item_open:
+            html.append("</li>")
+            item_open = False
 
     def close_blocks() -> None:
         nonlocal in_list, in_table
+        close_item()
         if in_list:
             html.append("</ul>")
             in_list = False
@@ -260,12 +273,22 @@ def markdown_to_html(markdown: str) -> str:
             continue
 
         if stripped.startswith("- "):
+            indent = len(line) - len(line.lstrip(" "))
             if in_table:
                 close_blocks()
+            if indent >= 2 and item_open:
+                # 缩进子项：挂进上一个顶层 <li> 内部（design.md §3.3 第 7 条）
+                if not in_sub:
+                    html.append('<ul class="sub">')
+                    in_sub = True
+                html.append(f"<li>{inline(stripped[2:])}</li>")
+                continue
+            close_item()
             if not in_list:
                 html.append("<ul>")
                 in_list = True
-            html.append(f"<li>{inline(stripped[2:])}</li>")
+            html.append(f"<li>{inline(stripped[2:])}")
+            item_open = True
             continue
 
         close_blocks()
@@ -315,7 +338,11 @@ HTML_TEMPLATE = Template(
   table.report { border-collapse: collapse; width: 100%; margin: 12px 0; }
   table.report th, table.report td { border: 1px solid #d0d7de; padding: 6px 10px; text-align: left; }
   table.report th { background: #f6f8fa; }
-  ul { padding-left: 22px; }
+  ul { padding-left: 22px; margin: 8px 0; }
+  ul > li { margin-top: 10px; line-height: 1.75; }
+  ul > li:first-child { margin-top: 0; }
+  ul.sub { margin: 6px 0 0; padding-left: 20px; }
+  ul.sub > li { margin-top: 4px; line-height: 1.7; color: #57606a; }
   code { background: #f6f8fa; padding: 1px 5px; border-radius: 4px; font-size: 90%; }
   blockquote { margin: 12px 0; padding: 8px 14px; border-left: 4px solid #d0a000;
                background: #fff8e5; color: #6b5300; }

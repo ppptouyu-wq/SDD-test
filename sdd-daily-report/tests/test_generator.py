@@ -16,6 +16,8 @@ Task 6 验收标准（v1.1 变更）：
 
 from __future__ import annotations
 
+import copy
+import re
 from datetime import date, datetime
 
 import pytest
@@ -457,7 +459,7 @@ def test_markdown_renders_commit_summary_under_the_subject_and_drops_the_body():
 
 
 def test_markdown_to_html_renders_the_indented_commit_summary_as_a_list_item():
-    """缩进的子列表项必须变成 <li>，不能退化成 <p>（design.md §3.3 第 7 条）。"""
+    """缩进的子列表项必须变成嵌套 <li>：不能退化成 <p>，也不能拍平成同级项（design.md §3.3 第 7 条）。"""
     member = _member_with_data()
     member.commits[0].message = _long_message()
 
@@ -467,4 +469,32 @@ def test_markdown_to_html_renders_the_indented_commit_summary_as_a_list_item():
     assert "<li>第一句说明这次改了什么。第二句说明为什么这么改。第三句收尾。</li>" in html
     assert "  - 第一句" not in html
     assert "第四句属于正文后面" not in html
+
+
+def test_html_keeps_each_commit_visually_separated():
+    """相邻提交在 HTML 里必须是各自的顶层项，摘要嵌在自己的父项内（v1.5.1 呈现缺陷修复）。"""
+    member = _member_with_data()
+    member.commits[0].message = _long_message()
+    second = copy.deepcopy(member.commits[0])
+    second.message = "feat(v1.4): 日报不再仅限工作日，双休日与节假日照常生成\n\n正文说明第一句。正文说明第二句。"
+    member.commits.append(second)
+
+    markdown = template.render_markdown([member], DAY, "平台研发组")
+    html = template.markdown_to_html(markdown)
+    commits_html = html.split(f"<h3>{template.SECTION_COMMITS}</h3>", 1)[1].split(
+        f"<h3>{template.SECTION_TASKS}</h3>", 1
+    )[0]
+
+    # 每条提交是一个顶层 <li>，摘要的嵌套列表紧跟在它的父项内部
+    assert commits_html.count("<ul>") == 1
+    assert commits_html.count('<ul class="sub">') == 2
+    assert re.search(
+        r'<li>[^\n]*\n<ul class="sub">\n<li>', commits_html
+    ), commits_html
+    assert commits_html.count("</li>") == 4  # 2 个顶层提交项 + 各自的 1 条摘要
+    # 摘要不许跑到父项外面变成同级项
+    assert "</li>\n<li>第一句" not in commits_html
+    # 顶层条目之间要有间距，摘要要比标题弱
+    assert "ul > li { margin-top: 10px" in html
+    assert "ul.sub > li { margin-top: 4px" in html
 

@@ -47,7 +47,7 @@ sdd-daily-report/
 
 ## 当前状态
 
-- 版本：v1.5（在 v1.4 基础上把日报里的提交信息收成「标题 + 正文前 3 句摘要」，见 `design.md` §3.3；v1.4 时取消默认的非工作日跳过：`main.run(working_days_only=False)`
+- 版本：v1.5.1（v1.5.1 修掉提交条目在邮件 HTML 里被拍平、看串的呈现缺陷，见 `design.md` §3.3 第 7/8 条；v1.5 在 v1.4 基础上把日报里的提交信息收成「标题 + 正文前 3 句摘要」，见 `design.md` §3.3；v1.4 时取消默认的非工作日跳过：`main.run(working_days_only=False)`
   默认每天都能跑，周末/节假日照常采集→生成→推送；旧行为保留为显式 `--working-days-only`，
   起点在 `specs/proposal.md` §3.3，见 `specs/design.md` §6.6）
 - 任务进度：Task 1 ~ Task 12 全部完成

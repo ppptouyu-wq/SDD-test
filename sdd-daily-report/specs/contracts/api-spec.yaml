@@ -2,7 +2,7 @@ openapi: 3.0.3
 
 info:
   title: 智能日报生成器 — 接口契约（api-spec.yaml）
-  version: 1.2.0
+  version: 1.3.0
   description: |
     本书 SDD 六阶段工作流【阶段三：接口契约】的产物之一（与 data-models.md 配套）。
 
@@ -442,7 +442,14 @@ components:
         github: { type: string, description: 对应 CommitRecord.author }
         lark:
           type: string
-          description: 对应 TaskRecord.assignee / MessageRecord.sender / AttendanceRecord.employee_id
+          description: 飞书 open_id，对应 TaskRecord.assignee / MessageRecord.sender
+        lark_employee_id:
+          type: string
+          description: >-
+            飞书员工 ID（v1.3 新增），**只**用于考勤查询，对应
+            AttendanceRecord.employee_id。考勤接口只接受 employee_id /
+            employee_no，不接受 open_id，故与 lark 分开存放。可选；缺省时
+            考勤以空名单发出并显式失败。
 
     AppConfig:
       type: object

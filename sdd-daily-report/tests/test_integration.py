@@ -118,7 +118,8 @@ def _wire_all_sources(monkeypatch, config, *, github_ok=True, lark_task_ok=True,
             )
         ])
 
-    def attendance_collect(since, until, *, config, client=None, token_manager=None,
+    def attendance_collect(since, until, *, config, employee_type="employee_id",
+                           user_ids=None, client=None, token_manager=None,
                            sleep=None):  # noqa: ANN001
         from shared.models import AttendanceRecord, CollectResult
 
@@ -126,7 +127,8 @@ def _wire_all_sources(monkeypatch, config, *, github_ok=True, lark_task_ok=True,
             return CollectResult.fail("飞书考勤 API 重试 3 次后仍失败：连接超时")
         return CollectResult.ok([
             AttendanceRecord(
-                employee_id="lisi@company.com", date=DAY,
+                # 考勤按员工ID匹配（不是 lark/open_id）：李四 = members[].lark_employee_id
+                employee_id="1002", date=DAY,
                 check_in=datetime(2026, 8, 20, 9, 32, tzinfo=TZ),
                 check_out=datetime(2026, 8, 20, 19, 5, tzinfo=TZ),
                 work_hours=9.5, status="正常",

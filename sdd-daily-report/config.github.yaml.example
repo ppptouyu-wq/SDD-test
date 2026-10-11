@@ -64,13 +64,16 @@ report:
 storage_path: "data/reports.db"
 
 # 成员身份映射表（书图 5-7）：把外部系统的账号映射到"人"
-#   github → 匹配 CommitRecord.author（GitHub 用户名）
-#   lark   → 匹配 TaskRecord.assignee / MessageRecord.sender
+#   github           → 匹配 CommitRecord.author（GitHub 用户名）
+#   lark             → 匹配 TaskRecord.assignee / MessageRecord.sender（飞书 open_id）
+#   lark_employee_id → 只用于考勤查询（飞书员工ID；考勤接口不接受 open_id）
 # **映射不上的人会被聚合层丢弃**（不会凭空造成员）
 members:
   - name: "张三"
     github: "zhangsan"
-    lark: "zhangsan@company.com"
+    lark: "ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    lark_employee_id: "1001"
   - name: "李四"
     github: "lisi-dev"
-    lark: "lisi@company.com"
+    lark: "ou_yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+    lark_employee_id: "1002"

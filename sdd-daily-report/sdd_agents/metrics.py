@@ -133,6 +133,10 @@ _KEYWORD_MAP: list[tuple[str, tuple[str, ...]]] = [
     ("工时", ("work_hours", "hours")),
     ("签退", ("checkout", "check_out", "missing")),
     ("考勤", ("attendance", "check_in", "check_out")),
+    # v1.3：同一飞书 ID 扇出到多个成员名
+    ("回填", ("fan", "backfill", "matching_member", "assign")),
+    ("共用", ("share", "same_id", "collide", "fan")),
+    ("名单", ("user_ids", "employee_id", "roster")),
     ("success", ("success",)),
     ("排序", ("sort", "order")),
     ("截断", ("trunc", "cap", "limit")),

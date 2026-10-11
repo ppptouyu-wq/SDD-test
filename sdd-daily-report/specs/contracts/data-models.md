@@ -167,15 +167,23 @@ CollectResult[T]:
 members:
   - name: "张三"
     github: "zhangsan"
-    lark: "zhangsan@company.com"
+    lark: "ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"   # 飞书 open_id
+    lark_employee_id: "1001"                       # 飞书员工ID（仅考勤用）
   - name: "李四"
     github: "lisi-dev"
-    lark: "lisi@company.com"
+    lark: "ou_yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+    lark_employee_id: "1002"
   - name: "王五"
     github: "wangwu"
-    lark: "wangwu@company.com"
+    lark: "ou_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+    lark_employee_id: "1003"
 ```
 
 **映射规则**：`CommitRecord.author ↔ members[].github`；`TaskRecord.assignee`、
-`MessageRecord.sender ↔ members[].lark`；`AttendanceRecord.employee_id ↔ members[].lark`
-（飞书用户 ID 与邮箱在本项目内视为同一标识，由配置统一维护）。
+`MessageRecord.sender ↔ members[].lark`（飞书 open_id）；
+`AttendanceRecord.employee_id ↔ members[].lark_employee_id`（飞书员工 ID）。
+
+**字段说明（v1.3 修正）**：`lark` 与 `lark_employee_id` 是**两个不同的值**，不可互相替代 ——
+飞书考勤接口只接受 `employee_id` / `employee_no`（传 `open_id` 被拒），
+任务/消息接口给的是 `open_id`。`lark` 为必填，`lark_employee_id` 可选（缺省时考勤按空名单发出，
+会以 `success=False` 显式失败而非静默返回空结果）。

@@ -134,14 +134,25 @@ AttendanceRecord（考勤记录）
 members:
   - name: "张三"
     github: "zhangsan"
-    lark: "zhangsan@company.com"
+    lark: "ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"   # 飞书 open_id
+    lark_employee_id: "1001"                       # 飞书员工ID（仅考勤用）
   - name: "李四"
     github: "lisi-dev"
-    lark: "lisi@company.com"
+    lark: "ou_yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+    lark_employee_id: "1002"
   - name: "王五"
     github: "wangwu"
-    lark: "wangwu@company.com"
+    lark: "ou_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+    lark_employee_id: "1003"
 ```
+
+**为什么飞书要拆成两个字段（v1.3 迭代修正）**：飞书各接口要求的身份标识并不统一 ——
+任务/消息接口给出的是 `open_id`，而考勤接口 `attendance/v1/user_tasks/query` 只接受
+`employee_id` / `employee_no`（实测传 `open_id` 被 `99992402` 字段校验直接拒绝，
+传邮箱则报 `1220001 userIds all invalid`）。v1.1 只定义了单个 `lark` 字段，
+既没有把名单传给考勤采集（空名单 → `employeeNos is empty`），也没有区分两种 ID 类型，
+于是"当天没打卡"被误报成"数据获取失败"。v1.3 把考勤用的 ID 拆成独立字段
+`lark_employee_id`，`lark` 继续服务 `TaskRecord.assignee` / `MessageRecord.sender`。
 
 ### 3.2 展示层视图模型（v1.2 迭代新增）
 

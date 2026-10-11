@@ -61,7 +61,7 @@
    | ② 真实 GitHub 仓库（2026-04-24，不推送） | 拉真实提交 |
    | ③ 健康检查（--check） | 逐项检查配置 |
    | ④ 今天（真实推送，慎用） | 会真的发邮件/推飞书 |
-   | ⑤ 跑全部测试（pytest） | 340 个用例 |
+   | ⑤ 跑全部测试（pytest） | 347 个用例 |
    | ⑥ 只跑当前打开的测试文件 | 调试单个用例 |
    | ⑦ 展示页：本地只读查看已生成的日报 | 起本地网页看日报（v1.2 新增） |
 
@@ -332,10 +332,10 @@ v1.2 的前端是用 **OpenDesign** 迭代出来的，过程留了档：
 | `tests/test_lark_task.py` | 7 | 飞书任务采集 |
 | `tests/test_lark_msg.py` | 13 | 飞书群消息采集（关键词过滤 + 敏感词剔除） |
 | `tests/test_attendance.py` | 12 | 飞书考勤采集（v1.1 新增） |
-| `tests/test_generator.py` | 14 | 日报生成（含 v1.1 考勤逻辑与布局顺序） |
+| `tests/test_generator.py` | 19 | 日报生成（含 v1.1 考勤逻辑、v1.3 双 ID 身份映射与「今日无记录」渲染） |
 | `tests/test_email.py` | 7 | SMTP 推送 |
 | `tests/test_lark_bot.py` | 8 | 飞书机器人推送 |
-| `tests/test_main.py` | 17 | `main.py` 入口：编排、`load_dotenv`、`load_tasks_file`、CLI 退出码、路径锚定 |
+| `tests/test_main.py` | 19 | `main.py` 入口：编排、`load_dotenv`、`load_tasks_file`、CLI 退出码、路径锚定、v1.3 考勤名单接线 |
 | `tests/test_integration.py` | 10 | 端到端集成：全链路、单源失败不阻塞、非工作日跳过 |
 
 另有 10 个测试文件覆盖第 8~10 章的 Agent 设计模式与治理层（书里未规定文件清单）：
@@ -348,6 +348,37 @@ v1.2 的前端是用 **OpenDesign** 迭代出来的，过程留了档：
 ```bash
 python -m pytest tests/ -v
 ```
+
+## v1.3 迭代：把飞书考勤真正接上（起点在 design，不在代码）
+
+第三次真实需求变更。触发点是**邮件里写着「数据获取失败：飞书考勤」，而飞书侧
+其实只是"当天没打卡"** —— 这正是书里图 7-8 那条"失败 → 判定是代码 bug 还是
+规范缺陷"分支。
+
+1. **定位起点**：先查代码，发现调用方 `main.py` 从来没把成员名单传给
+   `lark_attendance.collect()`，飞书回业务错误 `1220001 employeeNos is empty`，
+   被当成"采集失败"。但再往下查发现**规范本身也不够用**：任务/消息接口返回的是
+   `open_id`，考勤接口只接受 `employee_id` / `employee_no`（传 `open_id` 报
+   `99992402`），而 `design.md` 里只有一个 `members[].lark` 字段 —— 一个字段
+   服务不了两种匹配。→ 属**架构/契约变更**，起点上提到 `design.md`。
+2. **更新 `design.md` §3.1**：成员身份映射拆成两个字段 ——
+   `lark`（飞书 open_id，服务 `TaskRecord.assignee` / `MessageRecord.sender`）与
+   `lark_employee_id`（飞书员工 ID，**只**服务考勤），并写清为什么必须拆。
+3. **更新契约**：`contracts/data-models.md` §6 映射规则拆成两条；
+   `contracts/api-spec.yaml` 的 `Member` schema 同步加字段，版本 `1.3.0`。
+4. **更新 `tasks.md`**：Task 6 / Task 9 / Task 11 各补 v1.3 验收标准 —— 其中两条
+   针对本次暴露的**"采到了空数组不等于失败"**：考勤采集成功但本人无记录时，
+   日报必须渲染「今日无记录」，「考勤数据暂不可用」只留给真正的采集失败。
+5. **执行**：`main.py` 新增 `ATTENDANCE_EMPLOYEE_TYPE = "employee_id"` 与
+   `_attendance_user_ids()`（从 `members[].lark_employee_id` 去重取名单）；
+   `formatter.aggregate()` 增加 `by_lark_employee` 映射（空 ID 不入表）；
+   `template.render_markdown()` 的考勤分支由两段变三段。
+6. **全量回归 + 同一 commit**：`347 passed`，规范与代码一起提交（书图 7-8 的闭环要求）。
+
+真实跑通的证据（2026-10-09 那次）：日志从
+`飞书考勤采集失败 error: ... employeeNos is empty` 变成
+`飞书考勤采集完成 count 0` / `success: true`，日报里两个成员的考勤段都渲染成
+「- 今日无记录」——**"没打卡"与"取不到数据"从此在文书上不再混为一谈**。
 
 ## 工程化配套（第 3、8、9 章）
 

@@ -21,6 +21,7 @@ from datetime import date, datetime
 import pytest
 
 from generator import formatter, template
+from shared.config import Member
 from shared.errors import GeneratorError
 from shared.models import (
     AttendanceRecord,
@@ -262,3 +263,119 @@ def test_report_title_contains_date_and_team():
 
     assert "平台研发组" in title
     assert "2026-08-20" in title
+
+
+# ============================================ v1.3：身份映射扇出（Task 6 / Task 11）
+
+
+def _attendance(employee_id: str, status: str = "正常") -> AttendanceRecord:
+    return AttendanceRecord(
+        employee_id=employee_id,
+        date=date(2026, 10, 9),
+        check_in=datetime(2026, 10, 9, 9, 0),
+        check_out=datetime(2026, 10, 9, 18, 30),
+        work_hours=9.5,
+        status=status,
+    )
+
+
+def test_aggregate_fans_one_employee_id_out_to_every_matching_member():
+    """同一飞书员工 ID 对应多个成员名时，考勤必须回填给**所有人**。
+
+    场景来自真实配置：同一个人有两个 Git 作者名（例如网页端 `alice-web`、本地 `alice`），
+    映射表里就是两个成员条目、飞书 ID 相同。若聚合层用 `{lark: name}` 这种后写覆盖的
+    字典，只有最后一位成员能拿到考勤，另一位会被误显示成"今日无记录" —— 那是在撒谎。
+    """
+    members = [
+        Member(name="我（网页端）", github="alice-web", lark="ou_x", lark_employee_id="1001"),
+        Member(name="我（本地）", github="alice", lark="ou_x", lark_employee_id="1001"),
+    ]
+
+    got = formatter.aggregate(members, attendance=CollectResult.ok([_attendance("1001")]))
+    by_name = {m.name: m for m in got}
+
+    assert by_name["我（网页端）"].attendance is not None
+    assert by_name["我（本地）"].attendance is not None, "同一员工ID必须扇出到所有匹配成员"
+    assert by_name["我（本地）"].attendance.work_hours == 9.5
+
+
+def test_aggregate_keeps_open_id_matching_separate_from_employee_id():
+    """`lark`（open_id）管任务/消息，`lark_employee_id` 管考勤，两张表互不串味。
+
+    若只用一张表，把 employee_id 当 open_id 用（或反过来），要么考勤匹配不上，
+    要么任务被挂到同 ID 的另一个人头上。
+    """
+    members = [
+        Member(name="张三", github="zhangsan", lark="ou_zhangsan", lark_employee_id="1001"),
+        Member(name="李四", github="lisi-dev", lark="ou_lisi", lark_employee_id="1002"),
+    ]
+    tasks = CollectResult.ok([
+        TaskRecord(
+            assignee="ou_lisi",
+            title="联调",
+            status_from="待开始",
+            status_to="进行中",
+            updated_at=datetime(2026, 10, 9, 11, 0),
+        )
+    ])
+
+    got = formatter.aggregate(
+        members, tasks=tasks, attendance=CollectResult.ok([_attendance("1001", "缺勤")])
+    )
+    by_name = {m.name: m for m in got}
+
+    assert len(by_name["李四"].tasks) == 1     # 任务按 open_id 命中李四
+    assert by_name["张三"].tasks == []
+    assert by_name["张三"].attendance is not None   # 考勤按 employee_id 命中张三
+    assert by_name["张三"].attendance.status == "缺勤"
+    assert by_name["李四"].attendance is None
+
+
+def test_aggregate_does_not_let_blank_employee_ids_collide():
+    """没配 `lark_employee_id` 的成员不能被空字符串串成同一个人。"""
+    members = [
+        Member(name="张三", github="zhangsan", lark="ou_a"),
+        Member(name="李四", github="lisi-dev", lark="ou_b"),
+    ]
+
+    got = formatter.aggregate(members, attendance=CollectResult.ok([_attendance("")]))
+
+    assert all(m.attendance is None for m in got)
+
+
+def test_markdown_says_no_record_when_attendance_succeeded_but_empty():
+    """考勤采集成功但当天没打卡 → "今日无记录"，不是"数据获取失败"，也不是留白。
+
+    v1.3 回归背景：v1.1 的调用方没传名单，飞书回业务错误 employeeNos is empty，
+    日报误报"数据获取失败"；把名单接上之后，飞书对"确实没打卡"返回的是
+    code=0 + 空数组 —— 那时若照旧把考勤段整段省略，读者又会以为"这个模块没了"。
+    """
+    members = [MemberReport(name="张三", github_username="zhangsan")]
+
+    markdown = template.render_markdown(
+        members,
+        date(2026, 10, 9),
+        "平台研发组",
+        sources={"飞书考勤": True},
+        attendance_collected=True,
+    )
+
+    assert "### 考勤" in markdown
+    assert template.NO_RECORD in markdown
+    assert template.ATTENDANCE_UNAVAILABLE not in markdown
+
+
+def test_markdown_says_unavailable_only_when_attendance_collection_failed():
+    """采集失败才是"考勤数据暂不可用" —— 两个状态不许互换。"""
+    members = [MemberReport(name="张三", github_username="zhangsan")]
+
+    markdown = template.render_markdown(
+        members,
+        date(2026, 10, 9),
+        "平台研发组",
+        sources={"飞书考勤": False},
+        attendance_failed=True,
+        attendance_collected=False,
+    )
+
+    assert template.ATTENDANCE_UNAVAILABLE in markdown

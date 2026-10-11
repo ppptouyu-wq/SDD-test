@@ -22,11 +22,17 @@ from shared.errors import ConfigError
 
 @dataclass(frozen=True)
 class Member:
-    """成员身份映射（对应书图 5-7）。"""
+    """成员身份映射（对应书图 5-7）。
+
+    `lark` 是飞书 open_id，用于匹配 `TaskRecord.assignee` / `MessageRecord.sender`；
+    `lark_employee_id` 是飞书员工 ID，**只用于考勤查询** —— 飞书考勤接口不接受
+    open_id（实测报 99992402），因此两个 ID 必须分开存（v1.3，design.md §3.1）。
+    """
 
     name: str
     github: str
     lark: str
+    lark_employee_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -141,7 +147,16 @@ def load_config(path: str | Path) -> AppConfig:
         for key in ("name", "github", "lark"):
             if not item.get(key):
                 raise ConfigError(f"配置缺少必填字段：members[{index}].{key}")
-        members.append(Member(name=str(item["name"]), github=str(item["github"]), lark=str(item["lark"])))
+        members.append(
+            Member(
+                name=str(item["name"]),
+                github=str(item["github"]),
+                lark=str(item["lark"]),
+                # 可选：飞书员工 ID，只有考勤采集需要（v1.3）。缺省时考勤按空名单
+                # 发出，会被飞书拒为 employeeNos is empty。
+                lark_employee_id=str(item.get("lark_employee_id") or ""),
+            )
+        )
 
     # ---- github ----
     raw_github = raw.get("github") or {}

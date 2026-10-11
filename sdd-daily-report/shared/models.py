@@ -49,7 +49,7 @@ class MessageRecord:
 class AttendanceRecord:
     """考勤记录（v1.1 新增，见 specs/contracts/data-models.md）"""
 
-    employee_id: str  # 飞书用户 ID
+    employee_id: str  # 飞书员工 ID（employee_id，不是 open_id；见 design.md §3.1）
     date: date  # 考勤日期
     check_in: datetime | None  # 签到时间
     check_out: datetime | None  # 签退时间

@@ -22,6 +22,7 @@ import pytest
 
 import main as app
 from shared.config import load_config
+from shared.models import CollectResult
 from shared.storage import ReportStorage
 
 DAY = date(2026, 8, 20)  # 周四
@@ -300,4 +301,94 @@ members:
     assert resolved.is_absolute(), "相对 storage_path 必须被解析成绝对路径"
     assert resolved == project / "data" / "reports.db"
     assert not str(resolved).startswith(str(elsewhere))
+
+
+# ============================================ v1.3：考勤名单接线（Task 9 / Task 11）
+
+
+def test_collect_all_passes_the_configured_employee_ids_to_attendance(tmp_dir, monkeypatch):
+    """考勤必须以真实名单调用，且 ID 取自 `lark_employee_id`（不是 `lark`）。
+
+    回归背景（v1.1 遗留）：`collect_all` 曾以
+    `lark_attendance.collect(day, day, config=config.lark)` 调用，
+    请求体里 `user_ids` 是空列表，飞书回业务错误
+    `1220001 employeeNos is empty`，于是"当天确实没打卡"被误报成"数据获取失败"。
+    另外 `lark` 存的是 open_id，而考勤接口只接受 employee_id / employee_no，
+    两个 ID 必须分开取。
+    """
+    project = tmp_dir / "proj"
+    project.mkdir()
+    config_path = project / "config.yaml"
+    config_path.write_text(
+        """
+lark:
+  project_id: "proj_1"
+  chat_id: "oc_1"
+members:
+  - name: "张三"
+    github: "zhangsan"
+    lark: "ou_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    lark_employee_id: "1001"
+  - name: "李四"
+    github: "lisi-dev"
+    lark: "ou_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    lark_employee_id: "1002"
+  - name: "王五"
+    github: "wangwu"
+    lark: "ou_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    lark_employee_id: "1001"
+  - name: "赵六"
+    github: "zhaoliu"
+    lark: "ou_cccccccccccccccccccccccccccccccc"
+""",
+        encoding="utf-8",
+    )
+    config = load_config(config_path)
+
+    seen: dict = {}
+
+    def fake_attendance(since, until, **kwargs):
+        seen.update(kwargs)
+        return CollectResult.ok([])
+
+    monkeypatch.setattr(app.lark_attendance, "collect", fake_attendance)
+    for name in ("github_collector", "lark_task", "lark_msg"):
+        monkeypatch.setattr(
+            getattr(app, name), "collect", lambda *a, **k: CollectResult.ok([])
+        )
+
+    app.collect_all(config, date(2026, 10, 9))
+
+    assert seen["employee_type"] == "employee_id"
+    # 去重且保序：张三/王五共用 1001 只查一次；没配员工ID的赵六不产生空串
+    assert seen["user_ids"] == ["1001", "1002"]
+    assert seen["config"] is config.lark
+
+
+def test_attendance_user_ids_is_empty_when_nobody_has_an_employee_id(tmp_dir):
+    """全员漏配 `lark_employee_id` 时名单为空 —— 这种情况采集层必须显式失败。
+
+    这条不是"允许空名单"，而是把"空名单"这个可观测事实钉住：任务书 Task 9（v1.3）
+    要求空名单必须以 `success=False` 暴露，不能静默返回空结果（否则又变回
+    "没打卡"伪装成"数据获取失败"的老 bug 的反面 —— 空结果伪装成"正常且无记录"）。
+    """
+    project = tmp_dir / "proj"
+    project.mkdir()
+    config_path = project / "config.yaml"
+    config_path.write_text(
+        """
+lark:
+  project_id: "proj_1"
+  chat_id: "oc_1"
+members:
+  - name: "张三"
+    github: "zhangsan"
+    lark: "ou_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert app._attendance_user_ids(config) == []
 

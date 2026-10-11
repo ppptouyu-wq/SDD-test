@@ -53,9 +53,9 @@ def tmp_dir():
 @pytest.fixture
 def members() -> list[Member]:
     return [
-        Member(name="张三", github="zhangsan", lark="zhangsan@company.com"),
-        Member(name="李四", github="lisi-dev", lark="lisi@company.com"),
-        Member(name="王五", github="wangwu", lark="wangwu@company.com"),
+        Member(name="张三", github="zhangsan", lark="zhangsan@company.com", lark_employee_id="1001"),
+        Member(name="李四", github="lisi-dev", lark="lisi@company.com", lark_employee_id="1002"),
+        Member(name="王五", github="wangwu", lark="wangwu@company.com", lark_employee_id="1003"),
     ]
 
 

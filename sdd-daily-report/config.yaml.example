@@ -47,16 +47,21 @@ report:
 storage_path: "data/reports.db"
 
 # ---- 成员身份映射表（书图 5-7）----
+# lark             = 飞书 open_id（ou_ 开头），匹配飞书任务/消息
+# lark_employee_id = 飞书员工ID，**只**用于考勤（考勤接口不接受 open_id）
 members:
   - name: "张三"
     github: "zhangsan"
-    lark: "zhangsan@company.com"
+    lark: "ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    lark_employee_id: "1001"
   - name: "李四"
     github: "lisi-dev"
-    lark: "lisi@company.com"
+    lark: "ou_yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+    lark_employee_id: "1002"
   - name: "王五"
     github: "wangwu"
-    lark: "wangwu@company.com"
+    lark: "ou_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+    lark_employee_id: "1003"
 
 # ---- 凭据通过环境变量注入（design.md §6.2 安全约束）----
 # export GITHUB_TOKEN=...

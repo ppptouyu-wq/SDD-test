@@ -114,11 +114,11 @@ python main.py --serve --db 其他库.db  # 换日报库
 
 | 目录 | 内容 | 测试 |
 |---|---|---|
-| `sdd-daily-report/` | **主项目**「智能日报生成器」（第 4-7 章）。含 Agent 设计模式、团队实践与度量、适用性自评、Harness 审计、本地只读展示页（v1.2 迭代） | 340 通过 |
+| `sdd-daily-report/` | **主项目**「智能日报生成器」（第 4-7 章）。含 Agent 设计模式、团队实践与度量、适用性自评、Harness 审计、本地只读展示页（v1.2 迭代）、飞书双 ID 考勤接线（v1.3 迭代） | 347 通过 |
 | `kb-search/` | **案例项目**「知识库语义搜索工具」（第 1-2 章） | 109 通过、1 跳过 |
 | `brownfield-demo/` | **Brownfield 四步法**演示（第 7.4 节） | 50 通过 |
 
-合计 **499 个测试**。一键运行：
+合计 **506 个测试**。一键运行：
 
 ```bash
 python run_all_tests.py     # 需先安装 pytest
@@ -287,10 +287,10 @@ python -m pytest tests/ -v
 | `tests/test_lark_task.py` | ✅ | 7 |
 | `tests/test_lark_msg.py` | ✅ | 13 |
 | `tests/test_attendance.py`（新增测试） | ✅ | 12 |
-| `tests/test_generator.py`（含新考勤逻辑） | ✅ | 14 |
+| `tests/test_generator.py`（含新考勤逻辑） | ✅ | 19 |
 | `tests/test_email.py` | ✅ | 7 |
 | `tests/test_lark_bot.py` | ✅ | 8 |
-| `tests/test_main.py` | ✅ | 17 |
+| `tests/test_main.py` | ✅ | 19 |
 | `tests/test_integration.py` | ✅ | 10 |
 
 除书列的 9 个之外，本复现为第 8~10 章的 Agent 设计模式与治理层另建了

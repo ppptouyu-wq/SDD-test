@@ -41,6 +41,7 @@ def render_markdown(
     *,
     sources: dict[str, bool] | None = None,
     attendance_failed: bool = False,
+    attendance_collected: bool = False,
 ) -> str:
     """渲染 Markdown 格式日报。
 
@@ -48,6 +49,9 @@ def render_markdown(
     :param attendance_failed: 考勤采集是否失败。为 True 且成员无考勤记录时，
         渲染"考勤数据暂不可用"（tasks.md Task 6 v1.1 验收标准），
         而不是把考勤段整段留白——留白会被误读为"当日确实没有考勤"。
+    :param attendance_collected: 考勤采集是否**成功**（v1.3）。为 True 且成员无考勤
+        记录时渲染"今日无记录"：这是"当天没打卡"，与"采集失败"是两件事，
+        不能因为采到了空数组就把整段藏起来。
     """
     lines: list[str] = [f"# {team_name}工作日报 — {day.isoformat()}", ""]
 
@@ -110,6 +114,13 @@ def render_markdown(
             # Task 6 验收标准（v1.1）：考勤采集失败时明确标注，避免读者误以为当日无考勤
             lines.append("### 考勤")
             lines.append(f"- {ATTENDANCE_UNAVAILABLE}")
+            lines.append("")
+        elif attendance_collected:
+            # Task 6 验收标准（v1.3）：采集成功但本人无记录 = 当天没打卡，
+            # 说"今日无记录"。整段留白会被误读成"这个模块不存在"，
+            # 也与展示层（webview 显示"今日无记录"）对不上。
+            lines.append("### 考勤")
+            lines.append(f"- {NO_RECORD}")
             lines.append("")
 
         lines.append(f"### {SECTION_MESSAGES}")

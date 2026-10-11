@@ -47,6 +47,27 @@ SOURCE_LARK_TASK = "飞书任务"
 SOURCE_LARK_MSG = "飞书消息"
 SOURCE_LARK_ATTENDANCE = "飞书考勤"
 
+# 飞书考勤接口只接受 employee_id / employee_no 两种 ID 类型（实测：传 open_id 会被
+# 99992402 字段校验拒绝）。本项目统一按「员工ID」查询，取值与 config.yaml 中
+# members[].lark 存放的飞书 ID 保持一致（tasks.md Task 9 v1.3 验收标准）。
+ATTENDANCE_EMPLOYEE_TYPE = "employee_id"
+
+
+def _attendance_user_ids(config: AppConfig) -> list[str]:
+    """从成员身份映射表取出飞书**员工ID**列表（去重、保持顺序）。
+
+    tasks.md Task 9（v1.3）：考勤采集必须以真实名单调用。传空名单时飞书返回
+    业务错误 `1220001 employeeNos is empty`，会让"当天没打卡"被误报成
+    "数据获取失败" —— 这正是 v1.1 上线后考勤一栏长期显示失败的原因。
+    注意用的是 `lark_employee_id` 而不是 `lark`：考勤接口只接受 employee_id /
+    employee_no，传 open_id 会被字段校验拒绝（实测 99992402）。
+    """
+    unique: dict[str, None] = {}
+    for member in config.members:
+        if member.lark_employee_id:
+            unique.setdefault(member.lark_employee_id, None)
+    return list(unique)
+
 
 def collect_all(
     config: AppConfig,
@@ -89,7 +110,11 @@ def collect_all(
             ),
         }
         results[SOURCE_LARK_ATTENDANCE] = lark_attendance.collect(
-            day, day, config=config.lark
+            day,
+            day,
+            config=config.lark,
+            employee_type=ATTENDANCE_EMPLOYEE_TYPE,
+            user_ids=_attendance_user_ids(config),
         )
 
     for name, result in results.items():
@@ -296,6 +321,9 @@ def _mock_results(config: AppConfig, day: date) -> dict:
     members = config.members
     names_github = [m.github for m in members]
     names_lark = [m.lark for m in members]
+    # 考勤用它自己的 ID（employee_id），不是 open_id；演示配置也要配 lark_employee_id，
+    # 否则演示数据里考勤一条都匹配不上 —— 那正是真实链路 v1.1 的老症状。
+    attendance_ids = _attendance_user_ids(config)
     tz = timezone(timedelta(hours=8))
     stamp = lambda h, m: datetime.combine(day, time(h, m), tzinfo=tz)  # noqa: E731
 
@@ -357,7 +385,7 @@ def _mock_results(config: AppConfig, day: date) -> dict:
     ]
     attendance = [
         AttendanceRecord(
-            employee_id=names_lark[0],
+            employee_id=attendance_ids[0],
             date=day,
             check_in=stamp(9, 32),
             check_out=stamp(19, 5),
@@ -365,14 +393,14 @@ def _mock_results(config: AppConfig, day: date) -> dict:
             status="正常",
         ),
         AttendanceRecord(
-            employee_id=names_lark[1],
+            employee_id=attendance_ids[1],
             date=day,
             check_in=stamp(10, 15),
             check_out=stamp(19, 10),
             work_hours=8.9,
             status="迟到",
         ),
-    ]
+    ] if len(attendance_ids) >= 2 else []
 
     # 按关键词与敏感词过滤，保证演示数据与真实链路行为一致
     keywords = config.lark.keywords

@@ -61,7 +61,7 @@
    | ② 真实 GitHub 仓库（2026-04-24，不推送） | 拉真实提交 |
    | ③ 健康检查（--check） | 逐项检查配置 |
    | ④ 今天（真实推送，慎用） | 会真的发邮件/推飞书 |
-   | ⑤ 跑全部测试（pytest） | 358 个用例 |
+   | ⑤ 跑全部测试（pytest） | 364 个用例 |
    | ⑥ 只跑当前打开的测试文件 | 调试单个用例 |
    | ⑦ 展示页：本地只读查看已生成的日报 | 起本地网页看日报（v1.2 新增） |
 
@@ -333,7 +333,7 @@ v1.2 的前端是用 **OpenDesign** 迭代出来的，过程留了档：
 | `tests/test_lark_task.py` | 7 | 飞书任务采集 |
 | `tests/test_lark_msg.py` | 13 | 飞书群消息采集（关键词过滤 + 敏感词剔除） |
 | `tests/test_attendance.py` | 12 | 飞书考勤采集（v1.1 新增） |
-| `tests/test_generator.py` | 26 | 日报生成（含 v1.1 考勤逻辑、v1.3 双 ID 身份映射与「今日无记录」渲染、v1.5 提交摘要截断与条目分组） |
+| `tests/test_generator.py` | 32 | 日报生成（含 v1.1 考勤逻辑、v1.3 双 ID 身份映射与「今日无记录」渲染、v1.5 提交摘要截断与条目分组、v1.6 邮件卡片版式与计数/总结句） |
 | `tests/test_email.py` | 7 | SMTP 推送 |
 | `tests/test_lark_bot.py` | 8 | 飞书机器人推送 |
 | `tests/test_main.py` | 21 | `main.py` 入口：编排、`load_dotenv`、`load_tasks_file`、CLI 退出码、路径锚定、v1.3 考勤名单接线、v1.4 仅工作日开关默认关闭 |
@@ -374,7 +374,7 @@ python -m pytest tests/ -v
    `_attendance_user_ids()`（从 `members[].lark_employee_id` 去重取名单）；
    `formatter.aggregate()` 增加 `by_lark_employee` 映射（空 ID 不入表）；
    `template.render_markdown()` 的考勤分支由两段变三段。
-6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.5.1 后为 358），规范与代码一起提交（书图 7-8 的闭环要求）。
+6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.6 后为 364），规范与代码一起提交（书图 7-8 的闭环要求）。
 
 真实跑通的证据（2026-10-09 那次）：日志从
 `飞书考勤采集失败 error: ... employeeNos is empty` 变成
@@ -452,6 +452,35 @@ v1.5 上线后收件人反馈"几条提交挨在一起，容易看串"。查下�
 | 测试 | 新增 `test_html_keeps_each_commit_visually_separated`：两条提交各带摘要时必须各自成顶层项、摘要嵌在自己父项内、顶层只有 1 个 `<ul>`、2 个 `<ul class="sub">` |
 
 想恢复"摘要不缩进"的样子就去掉 `ul.sub` 那两条 CSS —— 但嵌套结构不能退，它是对契约的兑现。
+
+## v1.6 迭代：邮件日报换成卡片式可视化版式（起点在 proposal）
+
+需求原话是"就改用户能直接看到的日报，也就是邮件收到的那个，改的好看一点，像我给你图片的那样，
+有颜色啥的，看着美观"，并附了一张参考邮件截图。判定依据：改的是"日报长什么样"，属于产品行为 →
+**需求变更** → 起点 `proposal.md`，一路往下（design → contracts → tasks → 代码 → 测试）。
+
+邮件正文原先由 `markdown_to_html(report.markdown)` 生成——那是"文档转换"，先天做不出配色与卡片。
+本次改为**按结构直接渲染**：新增 `template.render_email_html(report)`，邮件是独立画布，
+**不引用展示层（`webview/`）的 `ant` 令牌**，红色 `--accent` `#d32029` 明确不用于邮件
+（大面积红色在邮件语境里是告警，日报是日常汇报）。
+
+| 层 | 改了什么 |
+|---|---|
+| `proposal.md` §3.1 | 新增三条验收标准：① 以"卡片 + 配色"的版式呈现；② 概览计数与总结句必须由真实数据现算，**不得由 AI 生成**、不得出现未采集的指标；③ 兼容主流邮件客户端（表格布局 + 内联样式，不用外部图片/CSS/Web 字体）（验收项 31 → 34） |
+| `design.md` §4 | 生成层接口新增 `template.render_email_html(report: DailyReport) -> str` |
+| `design.md` §6.7（新增） | 邮件版式的色板（`#1a6cf5` 品牌 / `#e8f1fd` 信息块 / `#f6f8fb` 中性块 / `#cf1322`+`#fdecec` 告警）、五段结构、`<table role="presentation">` + 内联样式且 CSS 里不得出现 `url(`、空态与失败态口径 |
+| `design.md` §3.3 | 追加说明：v1.6 起**邮件正文不再走 Markdown 转换**；`markdown_to_html()` 与它的第 7/8 条要求（嵌套而非拍平）保留，仍是"把已存档 Markdown 转 HTML"的通用转换器（补发历史日报用得上） |
+| `tasks.md` Task 7 | 补 5 条 v1.6 验收标准（版式、计数现算、邮件客户端友好、空态与失败告警、单测覆盖"有数据"与"全空"）（tasks 验收项 93 → 98） |
+| 代码 | `generator/template.py` 新增 `overview_counts()` / `summary_sentence()` / `repo_sentence()` / `render_email_html()` 与一组邮件专用渲染函数（`_email_callout` / `_email_stat_card` / `_email_commit_item` / `_email_document`）；`generator/formatter.py` 改调 `render_email_html()` 生成 `report.html` |
+| 测试 | `test_generator.py` 新增 6 条（26 → 32）：版式齐全、计数与总结句取真实数据、全 0 措辞、按仓库汇总句、邮件客户端友好性（无 `url(`/`<script`/`<img`）、失败源告警 + 空板块「今日无记录」 |
+
+版式五段：标题区（团队名 + 蓝色短线 + 日期）→ 信息块（日期 / 生成时间）→
+采集失败告警块 → `📊 今日概览` 三张计数卡 → `📌 今日总结` → 按成员分组的
+`📝 代码提交` / `✅ 任务进展` / `🕘 考勤` / `💬 协作沟通`，空板块一律用中性底渲染「今日无记录」。
+
+**"今日总结"不是 AI 写的**：`summary_sentence()` 是确定性模板句，只把三项真实计数填进去
+（`共完成 3 次代码提交，整体进展平稳。`），同一份数据每次渲染结果相同，所以能被测试钉住——
+这也是 `proposal.md` §2.2 把"智能摘要/AI 总结"列为排除项之后的必然选择。
 
 ## 工程化配套（第 3、8、9 章）
 

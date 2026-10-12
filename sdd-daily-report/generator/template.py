@@ -11,11 +11,11 @@ Jinja2 用于 HTML 邮件模板（pyproject.toml 依赖之一）。
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, datetime
 
 from jinja2 import Template
 
-from shared.models import DailyReport, MemberReport
+from shared.models import CommitRecord, DailyReport, MemberReport
 
 NO_RECORD = "今日无记录"
 FETCH_FAILED = "数据获取失败"
@@ -321,6 +321,337 @@ def _escape(text: str) -> str:
         .replace("<", "&lt;")
         .replace(">", "&gt;")
     )
+
+
+# ---------------------------------------------------------------------------
+# 邮件日报的可视化版式（design.md §6.7，v1.6）
+#
+# 邮件是独立画布：会被转发到任意客户端、主要在手机上读，所以不引用展示层的
+# `ant` 令牌（§6.6(4)），单独用下面这套"阅读型"色板。红色 `--accent` 不参与——
+# 大面积红色在邮件里等于"告警"，而日报是日常汇报。
+# ---------------------------------------------------------------------------
+EMAIL_BRAND = "#1a6cf5"        # 标题、概览数字、品牌短线
+EMAIL_BRAND_SOFT = "#e8f1fd"   # 信息块 / 总结块底色
+EMAIL_NEUTRAL_SOFT = "#f6f8fb"  # 「今日无记录」等中性块底色
+EMAIL_BORDER = "#e3e6ea"       # 卡片边框与分隔线
+EMAIL_FG = "#1f2329"           # 主文本
+EMAIL_FG_2 = "#646a73"         # 次级文本
+EMAIL_PAGE_BG = "#f2f3f5"      # 外层页面底色
+EMAIL_DANGER = "#cf1322"       # 采集失败（沿用 §6.1 的失败语义）
+EMAIL_DANGER_SOFT = "#fdecec"
+
+EMAIL_FONT = (
+    "-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',"
+    "Arial,'Helvetica Neue',sans-serif"
+)
+
+
+def _datetime_text(value: datetime | None) -> str:
+    return value.strftime("%Y-%m-%d %H:%M") if value is not None else ""
+
+
+def overview_counts(report: DailyReport) -> tuple[int, int, int]:
+    """当日团队级三项计数：代码提交 / 任务更新 / 协作讨论（design.md §6.7(2)）。"""
+    commits = sum(len(member.commits) for member in report.members)
+    tasks = sum(len(member.tasks) for member in report.members)
+    messages = sum(len(member.messages) for member in report.members)
+    return commits, tasks, messages
+
+
+def summary_sentence(commits: int, tasks: int, messages: int) -> str:
+    """今日总结句。
+
+    这是**确定性模板句**，不是 AI 生成内容：`proposal.md` §2.2 明确把"AI 摘要"排除在外，
+    所以这里只做计数与措辞拼接，不引入任何模型（design.md §6.7(3)）。
+    """
+    if not (commits or tasks or messages):
+        return "当日未采集到代码提交、任务更新或协作讨论，成员日报以考勤与状态为主。"
+    parts: list[str] = []
+    if commits:
+        parts.append(f"{commits} 次代码提交")
+    if tasks:
+        parts.append(f"{tasks} 项任务有更新")
+    if messages:
+        parts.append(f"{messages} 条协作讨论")
+    level = "整体进展活跃。" if (commits + tasks + messages) >= 5 else "整体进展平稳。"
+    return "共完成 " + "，".join(parts) + "，" + level
+
+
+def repo_sentence(member: MemberReport) -> str:
+    """某成员的提交仓库汇总句：「本日 在 X 仓库共提交 N 次，累计 +A/-B 行。」"""
+    totals: dict[str, list[int]] = {}
+    for commit in member.commits:
+        slot = totals.setdefault(commit.repo, [0, 0, 0])
+        slot[0] += 1
+        slot[1] += commit.additions
+        slot[2] += commit.deletions
+    pieces = [
+        f"在 {repo} 仓库共提交 {count} 次，累计 +{added}/-{removed} 行"
+        for repo, (count, added, removed) in totals.items()
+    ]
+    return "本日 " + "；".join(pieces) + "。"
+
+
+def _email_section_title(emoji: str, text: str) -> str:
+    return (
+        f'<div style="font-size:15px;font-weight:700;color:{EMAIL_FG};'
+        f'border-bottom:1px solid {EMAIL_BORDER};padding-bottom:8px;margin:22px 0 12px;">'
+        f"{emoji} {text}</div>"
+    )
+
+
+def _email_callout(inner: str, *, background: str = EMAIL_BRAND_SOFT, accent: str = EMAIL_BRAND) -> str:
+    """左侧带色边的提示块（信息块 / 总结块 / 告警块 / 中性块共用）。"""
+    return (
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+        f'style="margin:12px 0;"><tr>'
+        f'<td style="border-left:4px solid {accent};background:{background};'
+        f'padding:12px 16px;border-radius:0 8px 8px 0;font-size:14px;line-height:1.7;'
+        f'color:{EMAIL_FG};">{inner}</td></tr></table>'
+    )
+
+
+def _email_stat_card(value: int, label: str) -> str:
+    """今日概览里的一张计数卡（三张并排，靠外层表格的 td 实现分栏）。"""
+    return (
+        '<td align="center" valign="top" width="33.33%" style="padding:0 5px;">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+        f'style="background:#ffffff;border:1px solid {EMAIL_BORDER};border-radius:10px;">'
+        '<tr><td align="center" style="padding:16px 6px 14px;">'
+        f'<div style="font-size:28px;line-height:1.1;font-weight:700;color:{EMAIL_BRAND};">'
+        f"{value}</div>"
+        f'<div style="font-size:13px;color:{EMAIL_FG_2};margin-top:6px;">{label}</div>'
+        "</td></tr></table></td>"
+    )
+
+
+def _email_commit_item(commit: CommitRecord, subject: str, summary: str) -> str:
+    """一条提交：标题 + 仓库/行数元信息 + 摘要（摘要弱化，design.md §3.3）。"""
+    body = [
+        f'<div style="font-size:14px;font-weight:600;line-height:1.6;color:{EMAIL_FG};">'
+        f"{_escape(subject)}</div>",
+        f'<div style="font-size:12px;color:{EMAIL_FG_2};margin-top:4px;">'
+        f"{_escape(commit.repo)} · "
+        f"+{commit.additions} / -{commit.deletions} · "
+        f"{commit.files_changed} 个文件</div>",
+    ]
+    if summary:
+        body.append(
+            f'<div style="font-size:13px;color:{EMAIL_FG_2};line-height:1.7;margin-top:6px;">'
+            f"{_escape(summary)}</div>"
+        )
+    return (
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">'
+        "<tr>"
+        f'<td width="16" valign="top" style="font-size:14px;line-height:1.7;color:{EMAIL_BRAND};">•</td>'
+        f'<td style="padding-bottom:14px;">{"".join(body)}</td>'
+        "</tr></table>"
+    )
+
+
+def _email_plain_list(items: list[str]) -> str:
+    rows = "".join(
+        f'<div style="font-size:14px;line-height:1.75;color:{EMAIL_FG};margin-top:6px;">'
+        f'<span style="color:{EMAIL_BRAND};">•</span> {item}</div>'
+        for item in items
+    )
+    return rows
+
+
+def render_email_html(report: DailyReport) -> str:
+    """渲染邮件日报的 HTML（design.md §6.7，v1.6）。
+
+    与 `markdown_to_html()` 的区别：这里**直接按结构渲染**。原因是新版式要做汇总 ——
+    "概览计数""今日总结句""每个成员在哪些仓库提交了多少次、累计多少行"都要在
+    `DailyReport` 上现算，从已经拍平的 Markdown 反推既脆弱又不诚实。
+    Markdown 仍然是落库的原件（`report.markdown`），HTML 只是它的另一种呈现。
+    """
+    sources = report.sources or {}
+    attendance_failed = bool(sources) and sources.get(ATTENDANCE_SOURCE) is False
+    attendance_collected = bool(sources) and sources.get(ATTENDANCE_SOURCE) is True
+    show_unavailable = attendance_failed and not any(
+        member.attendance is not None for member in report.members
+    )
+
+    commits, tasks, messages = overview_counts(report)
+    day_text = _escape(report.date.isoformat())
+    blocks: list[str] = []
+
+    # ---- 1. 标题区 ----
+    blocks.append(
+        f'<div style="font-size:24px;line-height:1.3;font-weight:700;color:{EMAIL_BRAND};">'
+        f"{_escape(report.team_name)}工作日报</div>"
+        f'<div style="height:3px;width:56px;background:{EMAIL_BRAND};'
+        f'border-radius:2px;margin:12px 0 0;"></div>'
+        f'<div style="font-size:13px;color:{EMAIL_FG_2};margin-top:12px;">{day_text}</div>'
+    )
+
+    # ---- 2. 信息块 ----
+    blocks.append(
+        _email_callout(
+            f"日期：{day_text}　|　生成时间：{_escape(_datetime_text(report.generated_at))}",
+            background=EMAIL_NEUTRAL_SOFT,
+        )
+    )
+
+    # 采集失败的来源必须显式列出，严禁静默跳过（§6.1）
+    failed = [name for name, ok in sources.items() if not ok]
+    if failed:
+        blocks.append(
+            _email_callout(
+                f"⚠️ {FETCH_FAILED}：{_escape('、'.join(failed))}",
+                background=EMAIL_DANGER_SOFT,
+                accent=EMAIL_DANGER,
+            )
+        )
+
+    # ---- 3. 今日概览 ----
+    blocks.append(_email_section_title("📊", "今日概览"))
+    blocks.append(
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">'
+        "<tr>"
+        + _email_stat_card(commits, "代码提交")
+        + _email_stat_card(tasks, "任务更新")
+        + _email_stat_card(messages, "协作讨论")
+        + "</tr></table>"
+    )
+
+    # ---- 4. 今日总结 ----
+    blocks.append(
+        _email_callout(
+            "📌 <strong>今日总结：</strong>"
+            + _escape(summary_sentence(commits, tasks, messages))
+        )
+    )
+
+    # ---- 5. 按成员分组 ----
+    for member in report.members:
+        blocks.append(
+            f'<div style="font-size:18px;font-weight:700;color:{EMAIL_FG};'
+            f'margin:30px 0 0;">👤 {_escape(member.name)}</div>'
+        )
+
+        blocks.append(_email_section_title("📝", SECTION_COMMITS))
+        if member.commits:
+            blocks.append(_email_callout(_escape(repo_sentence(member))))
+            blocks.append(
+                f'<div style="font-size:14px;font-weight:700;color:{EMAIL_FG};'
+                f'margin:16px 0 10px;">主要变更：</div>'
+            )
+            blocks.extend(
+                _email_commit_item(commit, *summarize_commit(commit.message))
+                for commit in member.commits
+            )
+        else:
+            blocks.append(
+                _email_callout(
+                    NO_RECORD, background=EMAIL_NEUTRAL_SOFT, accent=EMAIL_BORDER
+                )
+            )
+
+        blocks.append(_email_section_title("✅", SECTION_TASKS))
+        if member.tasks:
+            blocks.append(
+                _email_plain_list(
+                    [
+                        f"{_escape(task.title)}：{_escape(task.status_from)} → "
+                        f"{_escape(task.status_to)}"
+                        for task in member.tasks
+                    ]
+                )
+            )
+        else:
+            blocks.append(
+                _email_callout(
+                    NO_RECORD, background=EMAIL_NEUTRAL_SOFT, accent=EMAIL_BORDER
+                )
+            )
+
+        # 考勤放在"任务进展"之后、"协作沟通"之前（tasks.md Task 6 v1.1 规定的顺序）
+        if member.attendance is not None:
+            attendance = member.attendance
+            blocks.append(_email_section_title("🕘", "考勤"))
+            blocks.append(
+                f'<div style="font-size:14px;line-height:1.75;color:{EMAIL_FG};">'
+                f"工时 {attendance.work_hours:.1f}h，状态：{_escape(attendance.status)}"
+                f"（{_time_text(attendance.check_in)} - {_time_text(attendance.check_out)}）</div>"
+            )
+        elif show_unavailable:
+            blocks.append(_email_section_title("🕘", "考勤"))
+            blocks.append(
+                _email_callout(
+                    ATTENDANCE_UNAVAILABLE,
+                    background=EMAIL_DANGER_SOFT,
+                    accent=EMAIL_DANGER,
+                )
+            )
+        elif attendance_collected:
+            blocks.append(_email_section_title("🕘", "考勤"))
+            blocks.append(
+                _email_callout(
+                    NO_RECORD, background=EMAIL_NEUTRAL_SOFT, accent=EMAIL_BORDER
+                )
+            )
+
+        blocks.append(_email_section_title("💬", SECTION_MESSAGES))
+        if member.messages:
+            blocks.append(
+                _email_plain_list(
+                    [
+                        f'<span style="color:{EMAIL_FG_2};">[{_escape(message.chat_name)}]</span> '
+                        f"{_escape(message.content)}"
+                        for message in member.messages
+                    ]
+                )
+            )
+        else:
+            blocks.append(
+                _email_callout(
+                    NO_RECORD, background=EMAIL_NEUTRAL_SOFT, accent=EMAIL_BORDER
+                )
+            )
+
+    return _email_document(
+        f"{report.team_name}工作日报 {report.date.isoformat()}",
+        "\n".join(blocks),
+    )
+
+
+def _email_document(title: str, inner: str) -> str:
+    """把版式内容包进邮件友好的 HTML 文档（表格骨架 + 内联样式，design.md §6.7(4)）。"""
+    return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>{_escape(title)}</title>
+<style>
+  /* 渐进增强：被剥掉也不影响布局与配色（配色与分栏都在内联样式里） */
+  body {{ margin: 0; padding: 0; background: {EMAIL_PAGE_BG}; }}
+  .wrap {{ border-radius: 12px; }}
+  .content {{ font-family: {EMAIL_FONT}; line-height: 1.7; }}
+  @media (max-width: 480px) {{
+    .wrap {{ width: 100% !important; }}
+    .pad {{ padding: 18px !important; }}
+  }}
+</style>
+</head>
+<body style="margin:0;padding:0;background:{EMAIL_PAGE_BG};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{EMAIL_PAGE_BG};">
+<tr><td align="center" style="padding:20px 12px;">
+  <table role="presentation" class="wrap" width="680" cellpadding="0" cellspacing="0" border="0" style="width:680px;max-width:680px;background:#ffffff;border-radius:12px;">
+  <tr><td class="pad content" style="padding:26px 28px 30px;font-family:{EMAIL_FONT};color:{EMAIL_FG};">
+{inner}
+  </td></tr>
+  </table>
+  <div style="font-size:12px;color:#9aa1ab;margin-top:14px;font-family:{EMAIL_FONT};">
+    本邮件由智能日报生成器自动发送 · 数据来源：GitHub / 飞书
+  </div>
+</td></tr>
+</table>
+</body>
+</html>
+"""
 
 
 HTML_TEMPLATE = Template(

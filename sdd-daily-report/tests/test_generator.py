@@ -82,12 +82,14 @@ def test_generate_returns_daily_report_with_three_sections():
 
 
 def test_generate_produces_renderable_html():
+    """v1.6：邮件正文由 render_email_html() 按 design.md §6.7 的卡片版式渲染。"""
     report = formatter.generate([_member_with_data()], DAY, "平台研发组")
 
     assert report.html.startswith("<!DOCTYPE html>")
-    assert "<h1>" in report.html
-    assert "<h3>代码提交</h3>" in report.html
-    assert "<table class=\"report\">" in report.html
+    assert "平台研发组工作日报" in report.html
+    assert "📊 今日概览" in report.html
+    assert "📌 <strong>今日总结：</strong>" in report.html
+    assert "📝 代码提交" in report.html
     assert report.html.rstrip().endswith("</html>")
 
 
@@ -497,4 +499,89 @@ def test_html_keeps_each_commit_visually_separated():
     # 顶层条目之间要有间距，摘要要比标题弱
     assert "ul > li { margin-top: 10px" in html
     assert "ul.sub > li { margin-top: 4px" in html
+
+
+# ---------------------------------------------------------------------------
+# v1.6：邮件日报的卡片式版式（design.md §6.7）
+# ---------------------------------------------------------------------------
+
+
+def test_email_html_has_the_four_presentation_blocks():
+    """标题区 / 今日概览 / 今日总结 / 按成员分组，四段都要在。"""
+    report = formatter.generate([_member_with_data()], DAY, "平台研发组")
+    html = report.html
+
+    assert "平台研发组工作日报" in html
+    assert f"日期：{DAY.isoformat()}" in html
+    assert "📊 今日概览" in html
+    assert "📌 <strong>今日总结：</strong>" in html
+    assert "👤 张三" in html
+    assert "主要变更：" in html
+
+
+def test_email_overview_counts_and_summary_come_from_real_data():
+    """概览计数与总结句必须现算，不得由 AI 生成（proposal.md §3.1 v1.6）。"""
+    member = _member_with_data()
+    report = formatter.generate([member, _member_with_data("李四", "lisi")], DAY, "平台研发组")
+
+    assert template.overview_counts(report) == (2, 2, 2)
+    # 三张计数卡的数字与标签
+    assert '>2</div>' in report.html
+    assert ">代码提交</div>" in report.html
+    assert ">任务更新</div>" in report.html
+    assert ">协作讨论</div>" in report.html
+    # 总结句按计数拼出来（确定性模板句）
+    assert template.summary_sentence(2, 2, 2) == "共完成 2 次代码提交，2 项任务有更新，2 条协作讨论，整体进展活跃。"
+    assert "共完成 2 次代码提交，2 项任务有更新，2 条协作讨论" in report.html
+
+
+def test_email_summary_sentence_stays_calm_when_there_is_nothing():
+    assert template.summary_sentence(0, 0, 0).startswith("当日未采集到")
+    assert template.summary_sentence(1, 0, 0).endswith("整体进展平稳。")
+
+
+def test_email_repo_sentence_aggregates_commits_by_repository():
+    member = _member_with_data()
+    second = copy.deepcopy(member.commits[0])
+    second.additions, second.deletions = 5, 1
+    member.commits.append(second)
+    other = copy.deepcopy(member.commits[0])
+    other.repo, other.additions, other.deletions = "acme/other", 10, 2
+    member.commits.append(other)
+
+    sentence = template.repo_sentence(member)
+
+    assert "在 acme/daily-report 仓库共提交 2 次，累计 +125/-19 行" in sentence
+    assert "在 acme/other 仓库共提交 1 次，累计 +10/-2 行" in sentence
+
+
+def test_email_html_stays_friendly_to_mail_clients():
+    """卡片与配色靠表格 + 内联样式；不引外部资源、不依赖 JS（design.md §6.7(4)）。"""
+    report = formatter.generate([_member_with_data()], DAY, "平台研发组")
+    html = report.html
+
+    assert '<table role="presentation"' in html
+    assert 'style="' in html
+    assert "url(" not in html          # 不引用外部图片/字体
+    assert "<script" not in html       # 不依赖 JavaScript
+    assert "<img" not in html
+
+
+def test_email_html_marks_failed_sources_and_empty_sections():
+    """采集失败要显式告警；某板块为空渲染「今日无记录」而不是留白（§6.7(5)）。"""
+    member = _member_with_data()
+    member.commits, member.tasks, member.messages = [], [], []
+
+    report = formatter.generate(
+        [member],
+        DAY,
+        "平台研发组",
+        sources={"GitHub": True, "飞书考勤": False, "飞书任务": True},
+    )
+
+    assert "⚠️ 数据获取失败：飞书考勤" in report.html
+    assert template.overview_counts(report) == (0, 0, 0)
+    # 三个板块各自有「今日无记录」，考勤是"数据获取失败"三态里的失败态
+    assert report.html.count("今日无记录") >= 3
+    assert template.ATTENDANCE_UNAVAILABLE in report.html
 

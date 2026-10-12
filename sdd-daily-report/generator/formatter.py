@@ -135,7 +135,6 @@ def generate(
             attendance_failed=attendance_failed,
             attendance_collected=attendance_collected,
         )
-        html = template.markdown_to_html(markdown)
     except Exception as exc:  # noqa: BLE001 - 转换为领域异常
         raise GeneratorError(f"日报渲染失败：{exc}") from exc
 
@@ -147,18 +146,25 @@ def generate(
         members=members,
         generated_at=timestamp,
         markdown=markdown,
-        html=html,
+        # v1.6：邮件正文改由结构化渲染器生成（design.md §6.7）——概览计数、
+        # 今日总结句、per-repo 汇总句都要在 DailyReport 上现算，从拍平的
+        # Markdown 反推既脆弱又不诚实。Markdown 仍是落库的原件。
+        html="",
         # v1.2：把各数据源的成败**持久化**进日报。只用于渲染是不够的 ——
         # 展示层要据此区分"采集失败"与"当时没记录来源"（design.md §3.2 的四态）。
         sources=dict(sources or {}),
     )
+    try:
+        report.html = template.render_email_html(report)
+    except Exception as exc:  # noqa: BLE001 - 转换为领域异常
+        raise GeneratorError(f"日报渲染失败：{exc}") from exc
     logger.info(
         "日报生成完成",
         extra={
             "source": "generator",
             "members": len(members),
             "markdown_chars": len(markdown),
-            "html_chars": len(html),
+            "html_chars": len(report.html),
         },
     )
     return report

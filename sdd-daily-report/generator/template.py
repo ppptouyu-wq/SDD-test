@@ -95,8 +95,13 @@ def summarize_commit(
 
 
 def report_title(team_name: str, day: date) -> str:
-    """邮件主题包含日期和团队名称（tasks.md Task 7 验收标准）。"""
-    return f"[{team_name}] {day.isoformat()} 工作日报"
+    """邮件主题 = 报告名 + 日期（tasks.md Task 7 验收标准）。
+
+    v1.7 起不再在报告名后面拼"工作日报"后缀：报告名由部署配置（`team_name`）
+    直接给出，本来就是完整名称（例如「孔子博智能日报」），再拼后缀会变成
+    「孔子博智能日报工作日报」。日期保留 —— 一天一封，收件箱里要能分辨是哪天。
+    """
+    return f"{team_name} {day.isoformat()}"
 
 
 def render_markdown(
@@ -118,7 +123,7 @@ def render_markdown(
         记录时渲染"今日无记录"：这是"当天没打卡"，与"采集失败"是两件事，
         不能因为采到了空数组就把整段藏起来。
     """
-    lines: list[str] = [f"# {team_name}工作日报 — {day.isoformat()}", ""]
+    lines: list[str] = [f"# {team_name} — {day.isoformat()}", ""]
 
     # 只有"采集失败且确实没有任何考勤数据"时才标注不可用。
     # 若采集成功但成员当日无考勤，属于"今日无记录"而非系统故障，不能混为一谈。
@@ -324,21 +329,46 @@ def _escape(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 邮件日报的可视化版式（design.md §6.7，v1.6）
+# 邮件日报的可视化版式（design.md §6.7，v1.6 起；v1.7 换色并调整结构）
 #
 # 邮件是独立画布：会被转发到任意客户端、主要在手机上读，所以不引用展示层的
 # `ant` 令牌（§6.6(4)），单独用下面这套"阅读型"色板。红色 `--accent` 不参与——
 # 大面积红色在邮件里等于"告警"，而日报是日常汇报。
+#
+# v1.7 换色：v1.6 照搬了需求参考稿的蓝（`#1a6cf5`），一眼就是模板色。v1.7 改用
+# 青碧（teal）作身份色，并加了顶部通栏、成员名条两处结构特征，让版式有自己的识别度。
 # ---------------------------------------------------------------------------
-EMAIL_BRAND = "#1a6cf5"        # 标题、概览数字、品牌短线
-EMAIL_BRAND_SOFT = "#e8f1fd"   # 信息块 / 总结块底色
-EMAIL_NEUTRAL_SOFT = "#f6f8fb"  # 「今日无记录」等中性块底色
-EMAIL_BORDER = "#e3e6ea"       # 卡片边框与分隔线
-EMAIL_FG = "#1f2329"           # 主文本
-EMAIL_FG_2 = "#646a73"         # 次级文本
-EMAIL_PAGE_BG = "#f2f3f5"      # 外层页面底色
+EMAIL_BRAND = "#0f766e"        # 标题、概览数字、色边（青碧）
+EMAIL_BRAND_DEEP = "#0b5b55"   # 顶部通栏 / 成员名条底色（比主色更深一档）
+EMAIL_BRAND_SOFT = "#e7f4f1"   # 信息块 / 总结块 / 计数卡底色
+EMAIL_NEUTRAL_SOFT = "#f5f6f8"  # 「今日无记录」等中性块底色
+EMAIL_BORDER = "#e3e7ea"       # 卡片边框与分隔线
+EMAIL_FG = "#1d2129"           # 主文本
+EMAIL_FG_2 = "#5b6472"         # 次级文本
+EMAIL_FOOTER_FG = "#9aa1ab"    # 页脚说明文字
+EMAIL_PAGE_BG = "#eef1f3"      # 外层页面底色
+EMAIL_CONTENT_BG = "#ffffff"   # 内容卡底色
 EMAIL_DANGER = "#cf1322"       # 采集失败（沿用 §6.1 的失败语义）
 EMAIL_DANGER_SOFT = "#fdecec"
+
+# §6.7(1) 允许出现在邮件里的全部颜色。`test_email_html_only_uses_the_design_palette`
+# 用它对渲染结果做白名单校验，避免以后随手加一个色板外的颜色把版式带跑偏。
+EMAIL_PALETTE = frozenset(
+    {
+        EMAIL_BRAND,
+        EMAIL_BRAND_DEEP,
+        EMAIL_BRAND_SOFT,
+        EMAIL_NEUTRAL_SOFT,
+        EMAIL_BORDER,
+        EMAIL_FG,
+        EMAIL_FG_2,
+        EMAIL_FOOTER_FG,
+        EMAIL_PAGE_BG,
+        EMAIL_CONTENT_BG,
+        EMAIL_DANGER,
+        EMAIL_DANGER_SOFT,
+    }
+)
 
 EMAIL_FONT = (
     "-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',"
@@ -412,16 +442,34 @@ def _email_callout(inner: str, *, background: str = EMAIL_BRAND_SOFT, accent: st
 
 
 def _email_stat_card(value: int, label: str) -> str:
-    """今日概览里的一张计数卡（三张并排，靠外层表格的 td 实现分栏）。"""
+    """今日概览里的一张计数卡（三张并排，靠外层表格的 td 实现分栏）。
+
+    v1.7 起是"浅青底 + 顶部深青条"，不再是与参考稿同款的白底圆角卡。
+    """
     return (
         '<td align="center" valign="top" width="33.33%" style="padding:0 5px;">'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
-        f'style="background:#ffffff;border:1px solid {EMAIL_BORDER};border-radius:10px;">'
-        '<tr><td align="center" style="padding:16px 6px 14px;">'
-        f'<div style="font-size:28px;line-height:1.1;font-weight:700;color:{EMAIL_BRAND};">'
+        f'style="background:{EMAIL_BRAND_SOFT};border-top:3px solid {EMAIL_BRAND};'
+        'border-radius:8px;">'
+        '<tr><td align="center" style="padding:14px 6px 12px;">'
+        f'<div style="font-size:28px;line-height:1.1;font-weight:700;color:{EMAIL_BRAND_DEEP};">'
         f"{value}</div>"
         f'<div style="font-size:13px;color:{EMAIL_FG_2};margin-top:6px;">{label}</div>'
         "</td></tr></table></td>"
+    )
+
+
+def _email_member_bar(name: str) -> str:
+    """成员名条（v1.7）：整宽浅青底 + 深青粗体，比裸文字更像"分区"。
+
+    与「今日概览」这类章节标题（`_email_section_title`）刻意区分：章节标题是白底细线，
+    成员是实底条 —— 一眼能看出"换人了"。
+    """
+    return (
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+        f'style="margin:34px 0 4px;"><tr><td style="background:{EMAIL_BRAND_SOFT};'
+        f'border-radius:6px;padding:10px 14px;font-size:17px;font-weight:700;'
+        f'color:{EMAIL_BRAND_DEEP};">👤 {_escape(name)}</td></tr></table>'
     )
 
 
@@ -477,21 +525,18 @@ def render_email_html(report: DailyReport) -> str:
     day_text = _escape(report.date.isoformat())
     blocks: list[str] = []
 
-    # ---- 1. 标题区 ----
+    # ---- 1. 标题区（v1.7：报告名与日期同行，生成时间靠右）----
     blocks.append(
-        f'<div style="font-size:24px;line-height:1.3;font-weight:700;color:{EMAIL_BRAND};">'
-        f"{_escape(report.team_name)}工作日报</div>"
-        f'<div style="height:3px;width:56px;background:{EMAIL_BRAND};'
-        f'border-radius:2px;margin:12px 0 0;"></div>'
-        f'<div style="font-size:13px;color:{EMAIL_FG_2};margin-top:12px;">{day_text}</div>'
-    )
-
-    # ---- 2. 信息块 ----
-    blocks.append(
-        _email_callout(
-            f"日期：{day_text}　|　生成时间：{_escape(_datetime_text(report.generated_at))}",
-            background=EMAIL_NEUTRAL_SOFT,
-        )
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">'
+        "<tr>"
+        f'<td valign="bottom" style="font-size:23px;line-height:1.3;font-weight:700;'
+        f'color:{EMAIL_BRAND_DEEP};">{_escape(report.team_name)}'
+        f'<span style="font-size:13px;font-weight:400;color:{EMAIL_FG_2};">　{day_text}</span></td>'
+        f'<td valign="bottom" align="right" style="font-size:12px;'
+        f'color:{EMAIL_FOOTER_FG};white-space:nowrap;">'
+        f"生成于 {_escape(_datetime_text(report.generated_at))}</td>"
+        "</tr></table>"
+        f'<div style="height:1px;background:{EMAIL_BORDER};margin:14px 0 0;"></div>'
     )
 
     # 采集失败的来源必须显式列出，严禁静默跳过（§6.1）
@@ -505,7 +550,7 @@ def render_email_html(report: DailyReport) -> str:
             )
         )
 
-    # ---- 3. 今日概览 ----
+    # ---- 2. 今日概览 ----
     blocks.append(_email_section_title("📊", "今日概览"))
     blocks.append(
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">'
@@ -516,7 +561,7 @@ def render_email_html(report: DailyReport) -> str:
         + "</tr></table>"
     )
 
-    # ---- 4. 今日总结 ----
+    # ---- 3. 今日总结 ----
     blocks.append(
         _email_callout(
             "📌 <strong>今日总结：</strong>"
@@ -524,12 +569,9 @@ def render_email_html(report: DailyReport) -> str:
         )
     )
 
-    # ---- 5. 按成员分组 ----
+    # ---- 4. 按成员分组 ----
     for member in report.members:
-        blocks.append(
-            f'<div style="font-size:18px;font-weight:700;color:{EMAIL_FG};'
-            f'margin:30px 0 0;">👤 {_escape(member.name)}</div>'
-        )
+        blocks.append(_email_member_bar(member.name))
 
         blocks.append(_email_section_title("📝", SECTION_COMMITS))
         if member.commits:
@@ -612,7 +654,7 @@ def render_email_html(report: DailyReport) -> str:
             )
 
     return _email_document(
-        f"{report.team_name}工作日报 {report.date.isoformat()}",
+        f"{report.team_name} {report.date.isoformat()}",
         "\n".join(blocks),
     )
 
@@ -639,12 +681,13 @@ def _email_document(title: str, inner: str) -> str:
 <body style="margin:0;padding:0;background:{EMAIL_PAGE_BG};">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{EMAIL_PAGE_BG};">
 <tr><td align="center" style="padding:20px 12px;">
-  <table role="presentation" class="wrap" width="680" cellpadding="0" cellspacing="0" border="0" style="width:680px;max-width:680px;background:#ffffff;border-radius:12px;">
-  <tr><td class="pad content" style="padding:26px 28px 30px;font-family:{EMAIL_FONT};color:{EMAIL_FG};">
+  <table role="presentation" class="wrap" width="680" cellpadding="0" cellspacing="0" border="0" style="width:680px;max-width:680px;background:{EMAIL_CONTENT_BG};border-radius:12px;overflow:hidden;">
+  <tr><td style="height:4px;background:{EMAIL_BRAND_DEEP};font-size:0;line-height:0;">&nbsp;</td></tr>
+  <tr><td class="pad content" style="padding:24px 28px 30px;font-family:{EMAIL_FONT};color:{EMAIL_FG};">
 {inner}
   </td></tr>
   </table>
-  <div style="font-size:12px;color:#9aa1ab;margin-top:14px;font-family:{EMAIL_FONT};">
+  <div style="font-size:12px;color:{EMAIL_FOOTER_FG};margin-top:14px;font-family:{EMAIL_FONT};">
     本邮件由智能日报生成器自动发送 · 数据来源：GitHub / 飞书
   </div>
 </td></tr>

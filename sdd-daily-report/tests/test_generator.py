@@ -86,7 +86,10 @@ def test_generate_produces_renderable_html():
     report = formatter.generate([_member_with_data()], DAY, "平台研发组")
 
     assert report.html.startswith("<!DOCTYPE html>")
-    assert "平台研发组工作日报" in report.html
+    # v1.7：报告名不再拼「工作日报」后缀，标题区是「报告名 + 日期同行」
+    assert ">平台研发组<span" in report.html
+    assert "2026-08-20" in report.html
+    assert "平台研发组工作日报" not in report.html
     assert "📊 今日概览" in report.html
     assert "📌 <strong>今日总结：</strong>" in report.html
     assert "📝 代码提交" in report.html
@@ -262,11 +265,17 @@ def test_markdown_to_html_escapes_html_text():
 
 
 def test_report_title_contains_date_and_team():
-    """主题含日期与团队名（Task 7 验收标准的共享实现）。"""
-    title = template.report_title("平台研发组", DAY)
+    """主题含日期与报告名（Task 7 验收标准的共享实现）。
 
-    assert "平台研发组" in title
-    assert "2026-08-20" in title
+    v1.7：报告名由部署配置给出完整名称（例「孔子博智能日报」），模板**不再**拼「工作日报」
+    后缀 —— 否则会变成「孔子博智能日报工作日报」。日期必须保留，收件箱里要能分辨是哪天。
+    """
+    title = template.report_title("孔子博智能日报", date(2026, 10, 11))
+
+    assert title == "孔子博智能日报 2026-10-11"
+    assert "工作日报" not in title
+    assert "平台研发组" in template.report_title("平台研发组", DAY)
+    assert "2026-08-20" in template.report_title("平台研发组", DAY)
 
 
 # ============================================ v1.3：身份映射扇出（Task 6 / Task 11）
@@ -511,8 +520,10 @@ def test_email_html_has_the_four_presentation_blocks():
     report = formatter.generate([_member_with_data()], DAY, "平台研发组")
     html = report.html
 
-    assert "平台研发组工作日报" in html
-    assert f"日期：{DAY.isoformat()}" in html
+    # v1.7：标题区把原「标题 + 信息块」合并成一行（报告名 + 日期同行，生成时间靠右）
+    assert ">平台研发组<span" in html
+    assert f"　{DAY.isoformat()}</span>" in html
+    assert "生成于 " in html
     assert "📊 今日概览" in html
     assert "📌 <strong>今日总结：</strong>" in html
     assert "👤 张三" in html
@@ -584,4 +595,40 @@ def test_email_html_marks_failed_sources_and_empty_sections():
     # 三个板块各自有「今日无记录」，考勤是"数据获取失败"三态里的失败态
     assert report.html.count("今日无记录") >= 3
     assert template.ATTENDANCE_UNAVAILABLE in report.html
+
+
+# ---------------------------------------------------------------------------
+# v1.7：邮件版式换色与结构微调（design.md §6.7）
+# ---------------------------------------------------------------------------
+
+
+def test_email_html_only_uses_the_design_palette():
+    """邮件 HTML 里出现的颜色必须落在 §6.7 的色板内（v1.7 起由白名单守住）。
+
+    这条是"配色别跑偏"的执行性约束：以后谁想随手加个颜色，先得过这一关。
+    """
+    report = formatter.generate(
+        [_member_with_data()],
+        DAY,
+        "平台研发组",
+        sources={"GitHub": True, "飞书考勤": False},
+    )
+    colors = set(re.findall(r"#[0-9a-fA-F]{6}", report.html))
+
+    assert colors, "版式里应当有颜色"
+    assert colors <= set(template.EMAIL_PALETTE)
+    # 展示层的身份红是大面积告警色，邮件里不得出现（§6.7(1)）
+    assert "#d32029" not in colors
+
+
+def test_email_html_uses_the_teal_identity_and_member_bar():
+    """v1.7 换色：身份色是青碧；计数卡是浅青底 + 顶部深青条；成员分组用整宽名条。"""
+    report = formatter.generate([_member_with_data()], DAY, "平台研发组")
+    html = report.html
+
+    assert template.EMAIL_BRAND == "#0f766e"
+    assert template.EMAIL_BRAND_DEEP == "#0b5b55"
+    assert f"border-top:3px solid {template.EMAIL_BRAND}" in html
+    assert f"background:{template.EMAIL_BRAND_DEEP}" in html        # 顶部通栏
+    assert f'color:{template.EMAIL_BRAND_DEEP};">👤 张三' in html   # 成员名条
 

@@ -27,7 +27,7 @@ def _report() -> DailyReport:
         team_name="平台研发组",
         members=[MemberReport(name="张三", github_username="zhangsan")],
         generated_at=datetime(2026, 8, 20, 18, 0),
-        markdown="# 平台研发组工作日报 — 2026-08-20\n\n### 代码提交\n- feat: 日报编排\n",
+        markdown="# 平台研发组 — 2026-08-20\n\n### 代码提交\n- feat: 日报编排\n",
         html="<html></html>",
     )
 
@@ -72,7 +72,10 @@ def test_send_pushes_markdown_message(config):
     assert captured["receive_id"] == config.lark.chat_id
     # 发送的消息为 Markdown 格式
     content = json.loads(captured["content"])
-    assert content["text"].startswith("# 平台研发组工作日报")
+    # v1.7：报告名不再拼「工作日报」后缀，首行是「报告名 — 日期」
+    first_line = content["text"].splitlines()[0]
+    assert first_line.startswith("# 平台研发组")
+    assert "工作日报" not in first_line
     assert "### 代码提交" in content["text"]
 
 

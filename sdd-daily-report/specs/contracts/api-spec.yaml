@@ -204,8 +204,8 @@ components:
           description: 工时（小时）= check_out - check_in，保留一位小数；缺任一时刻则为 0
         status:
           type: string
-          enum: [正常, 迟到, 早退, 缺勤, 休假, 签退缺失]
-          description: 考勤状态；缺失签退数据时必须是"签退缺失"
+          enum: [正常, 迟到, 早退, 缺勤, 休假, 签到缺失, 签退缺失]
+          description: 考勤状态；缺失签退数据时为"签退缺失"，缺失签到但有签退时为"签到缺失"（v1.8.4）
 
     # ---------- 聚合层模型 ----------
     MemberReport:
@@ -335,7 +335,7 @@ components:
           description: 工时（小时）
         status:
           type: string
-          description: 正常 / 迟到 / 早退 / 缺勤 / 休假 / 签退缺失
+          description: 正常 / 迟到 / 早退 / 缺勤 / 休假 / 签到缺失 / 签退缺失
 
     CommitView:
       type: object
@@ -617,6 +617,9 @@ x-module-contracts:
     behaviors:
       - 工时 = check_out - check_in
       - 缺失签退时 status 置为"签退缺失"，work_hours 为 0
+      - 缺失签到但有签退时 status 置为"签到缺失"（v1.8.4）；两者都缺为"缺勤"
+      - 解析的是真实响应结构 data.user_task_results[].records[]（v1.8.4 前误读 data.user_tasks，导致真实打卡被静默丢成"今日无记录"）
+      - "check_time / *_shift_time 是纪元秒的数字字符串；一天多段班次取最早签到与最晚签退"
       - API 不可用时 success=false 并附 error_message
       - "错误信息必须透传：飞书在 HTTP 400 时也返回结构化 code/msg，
         不得只抛 HTTP 400 而丢掉 employeeNos is empty 这类可定位提示"

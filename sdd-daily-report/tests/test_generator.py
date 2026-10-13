@@ -201,6 +201,46 @@ def test_attendance_section_sits_between_tasks_and_messages():
     assert i_tasks < i_attendance < i_messages
 
 
+def test_attendance_span_says_which_side_is_missing():
+    """v1.8.4：缺签到就写"无签到"，不能借用状态名把左右颠倒。
+
+    旧实现把 `None` 一律写成"签退缺失"，于是"缺签到、有签退"会被渲染成
+    `（签退缺失 - 20:24）` —— 与状态栏自相矛盾。
+    """
+    member = MemberReport(
+        name="张三",
+        github_username="zhangsan",
+        attendance=AttendanceRecord(
+            employee_id="emp_0001",
+            date=DAY,
+            check_in=None,
+            check_out=datetime(2026, 10, 13, 20, 24, 54),
+            work_hours=0.0,
+            status="签到缺失",
+        ),
+    )
+    report = formatter.generate([member], DAY, "平台研发组", sources={"飞书考勤": True})
+
+    assert "状态：签到缺失" in report.markdown
+    assert "（无签到 - 20:24）" in report.markdown
+    assert "签退缺失 - 20:24" not in report.markdown
+    assert "（无签到 - 20:24）" in report.html
+
+    # 反向：有签到、缺签退
+    member.attendance = AttendanceRecord(
+        employee_id="emp_0001",
+        date=DAY,
+        check_in=datetime(2026, 10, 13, 9, 0),
+        check_out=None,
+        work_hours=0.0,
+        status="签退缺失",
+    )
+    report = formatter.generate([member], DAY, "平台研发组", sources={"飞书考勤": True})
+
+    assert "（09:00 - 无签退）" in report.markdown
+    assert template._attendance_span(member.attendance) == "09:00 - 无签退"
+
+
 def test_aggregate_maps_records_to_members_by_identity(config, ts):
     """聚合依赖 config.yaml 的成员身份映射表（书图 5-7）。"""
     commits = CollectResult.ok([

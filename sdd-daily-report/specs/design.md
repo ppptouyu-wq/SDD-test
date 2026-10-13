@@ -120,11 +120,55 @@ AttendanceRecord（考勤记录）
 | check_in    | datetime \| None  | 签到时间                             |
 | check_out   | datetime \| None  | 签退时间                             |
 | work_hours  | float             | 工时（小时）                         |
-| status      | str               | 正常 / 迟到 / 早退 / 缺勤 / 休假       |
+| status      | str               | 正常 / 迟到 / 早退 / 缺勤 / 休假 / 签到缺失 / 签退缺失 |
 ```
 
 字段级契约与状态取值见 `contracts/data-models.md`；本节的 `AttendanceRecord` 与
 `MemberReport.attendance` 是 v1.1 迭代在架构层新增的部分。
+
+#### 3.0.1 考勤接口的真实响应结构与字段映射（v1.8.4 缺陷修复时补）
+
+v1.1 的解析代码按"猜想的响应结构"写成，读的键 `data.user_tasks` 与字段
+`check_date` / `check_in_time` / `check_out_time` / `status` **在真实响应里都不存在**
+（真实键是 `data.user_task_results`）。因为读不到就"成功地返回 0 条"，
+日报一路渲染成「今日无记录」——**明明是"没解析到"，却长得像"没打卡"**。
+真实结构（2026-10-13 实测 `POST /attendance/v1/user_tasks/query`）如下：
+
+```jsonc
+{"code": 0, "data": {"user_task_results": [{
+  "user_id": "emp_0001",        // 即 employee_id（不是 open_id）
+  "day": 20261013,              // 整数 YYYYMMDD，不是 "2026-10-13"
+  "employee_name": "…", "group_id": "…", "shift_id": "8",
+  "records": [{                 // 一天可能有多段班次 → 数组
+    "check_in_result": "Lack",  // 签到结果：Normal / Late / Lack / …
+    "check_out_result": "Normal",
+    "check_in_record":  { "check_time": "1791894294", … },  // 签到缺失时**该键不存在**
+    "check_out_record": { "check_time": "1791894294", … },
+    "check_in_shift_time": "1791853200",   // 班次应到/应走时间
+    "check_out_shift_time": "1791885600"
+  }]}]}}
+```
+
+- `check_time` / `*_shift_time` 是**纪元秒的数字字符串**（消息接口的 `create_time`
+  是毫秒 —— 两处量级不同，解析器必须按量级判断）。
+- 一天多段班次：取当日**最早**签到与**最晚**签退合成一条 `AttendanceRecord`。
+- 状态判定顺序（自上而下，先命中先返回）：
+
+| 条件 | status |
+|---|---|
+| 既无签到也无签退 | 缺勤 |
+| 无签到、有签退 | **签到缺失**（v1.8.4 新增：真实数据里 `check_in_result == "Lack"` 且 `check_in_record` 键缺失） |
+| 有签到、无签退 | 签退缺失 |
+| 两者都有，任一段签到结果为 `Late` | 迟到 |
+| 两者都有，任一段签退结果为 `Early` | 早退 |
+| 其余 | 正常 |
+
+- **解析不到时必须出声**：若响应里既没有 `user_task_results`、也没有旧键
+  `user_tasks`，采集器要打 WARNING 并带上实际出现的键名，不允许再静默返回 0 条
+  （v1.8.4 的教训就是"0 条"看起来完全合法）。
+- **呈现时缺哪一侧就说哪一侧**：考勤行渲染成「（签到 - 签退）」，
+  缺失的一侧写"无签到"/"无签退"，不得借用状态名（v1.8.4 前把 `None`
+  一律写成"签退缺失"，于是"缺签到"会被渲染成「签退缺失 - 20:24」，左右颠倒）。
 
 ### 3.1 跨系统身份映射
 

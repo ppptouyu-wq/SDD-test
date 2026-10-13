@@ -28,13 +28,24 @@
 
 校准后实测返回 **业务级错误** `1220001 employeeNos is empty`，
 而非格式级错误 `99992402` —— **错误码的变化即格式正确的判据**。
-（该租户没有考勤员工数据，所以拿不到真实记录，但请求构造已确认正确。）
+（该租户当时没有考勤员工数据，所以拿不到真实记录，但请求构造已确认正确。）
 
 本次还修正了一个错误信息透传缺陷：飞书在 HTTP 400 时同样返回结构化
 `code`/`msg`，早期实现只抛 `"HTTP 400"`，把 `employeeNos is empty`
 这类可定位问题的提示丢掉了。现在会原样带出。
 
 三条格式契约已由 `tests/test_attendance.py` 锁定。
+
+--------------------------------------------------------------------------
+⚠️ v1.8.4 缺陷修复：**响应解析**曾经整段是错的（2026-10-13 实测发现）
+
+请求格式对，但**读取响应的键名是猜的**：代码读 `data.user_tasks` 与
+`check_in_time` / `check_out_time` / `check_date` / `status`，而这些键在真实响应里
+**都不存在**（真实键是 `data.user_task_results`，时刻在
+`records[].check_in_record.check_time`，日期是整数 `day`）。
+读不到就"成功地返回 0 条"，日报一路渲染成「今日无记录」——
+**看起来像"没打卡"，其实是"没解析到"**。真实响应结构与字段映射见
+`specs/design.md` §3.0.1，判定表见同节末尾。
 --------------------------------------------------------------------------
 """
 
@@ -57,6 +68,11 @@ from collector.lark_task import TOKEN_INVALID_CODES
 logger = get_logger("collector.lark_attendance")
 
 STATUS_MISSING_CHECKOUT = "签退缺失"
+STATUS_MISSING_CHECKIN = "签到缺失"
+STATUS_ABSENT = "缺勤"
+STATUS_NORMAL = "正常"
+STATUS_LATE = "迟到"
+STATUS_EARLY = "早退"
 TZ = timezone(timedelta(hours=8))
 
 
@@ -71,23 +87,38 @@ def compute_work_hours(check_in: datetime | None, check_out: datetime | None) ->
 def resolve_status(
     raw_status: str | None, check_in: datetime | None, check_out: datetime | None
 ) -> str:
-    """缺失签退数据时状态标注为"签退缺失"，否则使用接口返回的状态。"""
-    if check_in is not None and check_out is None:
+    """按"签到/签退是否齐全"判定状态；齐全时使用接口返回的状态。
+
+    判定顺序见 design.md §3.0.1：
+    两者都缺 → 缺勤；缺签到 → 签到缺失；缺签退 → 签退缺失；齐全 → 接口状态或"正常"。
+    """
+    if check_in is None and check_out is None:
+        return STATUS_ABSENT
+    if check_in is None:
+        return STATUS_MISSING_CHECKIN
+    if check_out is None:
         return STATUS_MISSING_CHECKOUT
     if raw_status:
         return str(raw_status)
-    return "正常"
+    return STATUS_NORMAL
 
 
 def _parse_datetime(value: object) -> datetime | None:
+    """解析打卡时刻：纪元秒/毫秒（数字或数字字符串）与 ISO 字符串都要认。
+
+    实测（2026-10-13）`check_in_record.check_time` 是**纪元秒的数字字符串**
+    （如 `"1791894294"`），而飞书消息接口的 `create_time` 是**毫秒**，
+    所以按量级判断（1e11 秒 ≈ 公元 5138 年，故 ≥1e11 必为毫秒）。
+    """
     if value in (None, "", 0, "0"):
         return None
+    if isinstance(value, bool):
+        return None
     if isinstance(value, (int, float)):
-        seconds = float(value)
-        if seconds > 1e11:  # 毫秒
-            seconds /= 1000.0
-        return datetime.fromtimestamp(seconds, tz=TZ)
-    text = str(value)
+        return _epoch_to_datetime(float(value))
+    text = str(value).strip()
+    if text.isdigit():
+        return _epoch_to_datetime(float(text))
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
@@ -95,6 +126,11 @@ def _parse_datetime(value: object) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=TZ)
     return parsed
+
+
+def _epoch_to_datetime(value: float) -> datetime:
+    seconds = value / 1000.0 if value >= 1e11 else value
+    return datetime.fromtimestamp(seconds, tz=TZ)
 
 
 def collect(
@@ -136,18 +172,30 @@ def collect(
         )
 
         records: list[AttendanceRecord] = []
-        items = ((data.get("data") or {}).get("user_tasks")) or []
-        for item in items:
-            check_in = _parse_datetime(item.get("check_in_time"))
-            check_out = _parse_datetime(item.get("check_out_time"))
+        payload = data.get("data") or {}
+        items = payload.get("user_task_results")
+        if items is None:
+            # 解析不到时必须出声：静默返回 0 条会一路渲染成"今日无记录"，
+            # 而"0 条"看起来完全合法（v1.8.4 的缺陷就是这样藏了三个月）。
+            items = payload.get("user_tasks")
+            if items is None:
+                logger.warning(
+                    "飞书考勤响应缺少 user_task_results 字段，无法解析",
+                    extra={
+                        "source": "lark_attendance",
+                        "response_keys": sorted(payload.keys()),
+                    },
+                )
+        for item in items or []:
+            check_in, check_out, raw_status = _merge_shifts(item.get("records"))
             records.append(
                 AttendanceRecord(
-                    employee_id=str(item.get("employee_id") or item.get("user_id") or ""),
-                    date=_parse_date(item.get("check_date"), since),
+                    employee_id=str(item.get("user_id") or item.get("employee_id") or ""),
+                    date=_parse_date(item.get("day") or item.get("check_date"), since),
                     check_in=check_in,
                     check_out=check_out,
                     work_hours=compute_work_hours(check_in, check_out),
-                    status=resolve_status(item.get("status"), check_in, check_out),
+                    status=resolve_status(raw_status, check_in, check_out),
                 )
             )
 
@@ -164,11 +212,57 @@ def collect(
             client.close()
 
 
+def _record_time(record: object) -> datetime | None:
+    """从 `check_in_record` / `check_out_record` 里取打卡时刻。"""
+    if not isinstance(record, dict):
+        return None
+    return _parse_datetime(record.get("check_time"))
+
+
+def _merge_shifts(shifts: object) -> tuple[datetime | None, datetime | None, str]:
+    """把一天的多段班次合成「最早签到 + 最晚签退 + 接口状态」。
+
+    `records[]` 里每段班次形如
+    `{"check_in_result": "Lack", "check_out_result": "Normal",
+      "check_in_record": {...}, "check_out_record": {...}}`；
+    **签到缺失时 `check_in_record` 键不存在**（`check_in_result` 为 `Lack`）。
+
+    接口状态只用来区分「迟到 / 早退」，签到签退是否齐全由时刻本身判定
+    （见 design.md §3.0.1 的判定表）。
+    """
+    check_ins: list[datetime] = []
+    check_outs: list[datetime] = []
+    raw_status = ""
+    for shift in shifts or []:
+        if not isinstance(shift, dict):
+            continue
+        moment = _record_time(shift.get("check_in_record"))
+        if moment is not None:
+            check_ins.append(moment)
+        moment = _record_time(shift.get("check_out_record"))
+        if moment is not None:
+            check_outs.append(moment)
+        if not raw_status:
+            if str(shift.get("check_in_result") or "") == "Late":
+                raw_status = STATUS_LATE
+            elif str(shift.get("check_out_result") or "") == "Early":
+                raw_status = STATUS_EARLY
+    return (
+        min(check_ins) if check_ins else None,
+        max(check_outs) if check_outs else None,
+        raw_status,
+    )
+
+
 def _parse_date(value: object, fallback: date) -> date:
+    """解析考勤日期：真实响应给的是整数 `20261013`，也兼容 `"2026-10-13"`。"""
     if not value:
         return fallback
+    text = str(value).strip()
+    if len(text) == 8 and text.isdigit():
+        return date(int(text[:4]), int(text[4:6]), int(text[6:]))
     try:
-        return date.fromisoformat(str(value)[:10])
+        return date.fromisoformat(text[:10])
     except ValueError:
         return fallback
 

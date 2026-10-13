@@ -208,7 +208,7 @@ def render_markdown(
             lines.append("### 考勤")
             lines.append(
                 f"- 工时 {attendance.work_hours:.1f}h，状态：{attendance.status} "
-                f"（{_time_text(attendance.check_in)} - {_time_text(attendance.check_out)}）"
+                f"（{_attendance_span(attendance)}）"
             )
             lines.append("")
         elif show_unavailable:
@@ -235,10 +235,17 @@ def render_markdown(
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _time_text(value: object) -> str:
-    if value is None:
-        return "签退缺失"
-    return value.strftime("%H:%M")  # type: ignore[union-attr]
+def _attendance_span(attendance: object) -> str:
+    """「签到 - 签退」的呈现：缺哪一侧就写哪一侧，不借用状态名（v1.8.4）。
+
+    旧实现把 `None` 一律写成"签退缺失"，于是"缺签到、有签退"会被渲染成
+    `（签退缺失 - 20:24）` —— 左右颠倒，与状态栏自相矛盾。
+    """
+    check_in = getattr(attendance, "check_in", None)
+    check_out = getattr(attendance, "check_out", None)
+    left = check_in.strftime("%H:%M") if check_in else "无签到"
+    right = check_out.strftime("%H:%M") if check_out else "无签退"
+    return f"{left} - {right}"
 
 
 def markdown_to_html(markdown: str) -> str:
@@ -711,7 +718,7 @@ def render_email_html(report: DailyReport) -> str:
             blocks.append(
                 f'<div style="font-size:14px;line-height:1.75;color:{EMAIL_FG};">'
                 f"工时 {attendance.work_hours:.1f}h，状态：{_escape(attendance.status)}"
-                f"（{_time_text(attendance.check_in)} - {_time_text(attendance.check_out)}）</div>"
+                f"（{_escape(_attendance_span(attendance))}）</div>"
             )
         elif show_unavailable:
             blocks.append(_email_section_title("🕘", "考勤"))

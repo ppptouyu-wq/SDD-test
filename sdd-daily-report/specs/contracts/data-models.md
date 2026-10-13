@@ -53,9 +53,12 @@
 | check_in | datetime \| None | 否 | 签到时间；缺失时为 None |
 | check_out | datetime \| None | 否 | 签退时间；缺失时为 None |
 | work_hours | float | 是 | 工时（小时）= check_out - check_in，保留一位小数；缺任一时刻则为 0 |
-| status | str | 是 | **枚举：正常 / 迟到 / 早退 / 缺勤 / 休假 / 签退缺失** |
+| status | str | 是 | **枚举：正常 / 迟到 / 早退 / 缺勤 / 休假 / 签到缺失 / 签退缺失** |
 
-> `status` 的取值受枚举约束：**缺失签退数据时必须为"签退缺失"**（tasks.md Task 11）。
+> `status` 的取值受枚举约束：**缺失签退数据时必须为"签退缺失"**（tasks.md Task 11）；
+> **缺失签到但有签退时必须为"签到缺失"**（v1.8.4 新增，真实数据里
+> `check_in_result == "Lack"` 且 `check_in_record` 键不存在）；两者都缺为"缺勤"。
+> 判定顺序与响应字段映射见 `design.md` §3.0.1。
 > 该枚举在 `api-spec.yaml` 中同样声明，两处不得矛盾。
 > 示例：某人 09:32 签到但无签退记录 → `check_out=None`、`work_hours=0.0`、`status="签退缺失"`。
 

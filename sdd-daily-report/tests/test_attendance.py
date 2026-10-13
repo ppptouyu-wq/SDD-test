@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date, datetime, timedelta, timezone
 
 import httpx
@@ -41,16 +42,37 @@ def _collect(config, handler):
     )
 
 
-def _task(user: str, check_in, check_out, status: str | None = None) -> dict:
-    item = {
-        "employee_id": user,
-        "check_date": "2026-08-20",
-        "check_in_time": check_in,
-        "check_out_time": check_out,
+def _stamp(value: str | None) -> str:
+    """把 ISO 时刻转成**纪元秒的数字字符串** —— 真实响应里 check_time 就长这样。"""
+    if value is None:
+        return ""
+    return str(int(datetime.fromisoformat(value).timestamp()))
+
+
+def _task(
+    user: str,
+    check_in,
+    check_out,
+    check_in_result: str = "Normal",
+    check_out_result: str = "Normal",
+) -> dict:
+    """按**真实响应结构**造一条考勤记录（design.md §3.0.1）。
+
+    易错点：签到缺失时 `check_in_result` 为 `Lack` 且**没有 `check_in_record` 键**；
+    旧夹具（`user_tasks` + `check_in_time`/`check_date`/`status`）是猜想的结构，
+    所以它锁不住"解析读错键名"这个缺陷。
+    """
+    shift: dict = {
+        "check_in_result": check_in_result if check_in else "Lack",
+        "check_out_result": check_out_result if check_out else "Lack",
+        "check_in_shift_time": _stamp("2026-08-20T09:00:00+08:00"),
+        "check_out_shift_time": _stamp("2026-08-20T18:00:00+08:00"),
     }
-    if status:
-        item["status"] = status
-    return item
+    if check_in:
+        shift["check_in_record"] = {"check_time": _stamp(check_in), "user_id": user}
+    if check_out:
+        shift["check_out_record"] = {"check_time": _stamp(check_out), "user_id": user}
+    return {"user_id": user, "day": 20260820, "records": [shift]}
 
 
 def test_collect_returns_collect_result_with_success_flag(config):
@@ -62,12 +84,11 @@ def test_collect_returns_collect_result_with_success_flag(config):
             json={
                 "code": 0,
                 "data": {
-                    "user_tasks": [
+                    "user_task_results": [
                         _task(
                             "zhangsan@company.com",
                             "2026-08-20T09:32:00+08:00",
                             "2026-08-20T19:05:00+08:00",
-                            "正常",
                         )
                     ]
                 },
@@ -99,7 +120,7 @@ def test_work_hours_computed_from_check_in_and_check_out(config):
             json={
                 "code": 0,
                 "data": {
-                    "user_tasks": [
+                    "user_task_results": [
                         # 09:32 -> 19:05 = 9h33m = 9.55h -> 9.6（四舍五入，保留一位小数）
                         _task(
                             "zhangsan@company.com",
@@ -144,8 +165,8 @@ def test_missing_check_out_is_marked_as_missing(config):
             json={
                 "code": 0,
                 "data": {
-                    "user_tasks": [
-                        _task("zhangsan@company.com", "2026-08-20T09:32:00+08:00", None, "正常")
+                    "user_task_results": [
+                        _task("zhangsan@company.com", "2026-08-20T09:32:00+08:00", None)
                     ]
                 },
             },
@@ -165,6 +186,10 @@ def test_resolve_status_helper():
     assert lark_attendance.resolve_status("正常", start, start) == "正常"
     assert lark_attendance.resolve_status("正常", start, None) == "签退缺失"
     assert lark_attendance.resolve_status(None, start, start) == "正常"
+    # v1.8.4：缺签到但有签退 → 签到缺失；两者都缺 → 缺勤
+    assert lark_attendance.resolve_status(None, None, start) == "签到缺失"
+    assert lark_attendance.resolve_status(None, None, None) == "缺勤"
+    assert lark_attendance.resolve_status("迟到", start, start) == "迟到"
 
 
 def test_api_unavailable_returns_failure_with_detail(config):
@@ -195,26 +220,14 @@ def test_network_failure_returns_failure(config):
 
 
 def test_missing_check_in_and_check_out_falls_back_to_check_date(config):
-    """API 未返回 check_date 时应回退到查询区间起始日。"""
+    """API 未返回 `day` 时应回退到查询区间起始日。"""
 
     def handler(request: httpx.Request) -> httpx.Response:
         if "tenant_access_token" in str(request.url):
             return httpx.Response(200, json=TOKEN_PAYLOAD)
-        return httpx.Response(
-            200,
-            json={
-                "code": 0,
-                "data": {
-                    "user_tasks": [
-                        {
-                            "employee_id": "wangwu@company.com",
-                            "check_in_time": "2026-08-20T08:31:00+08:00",
-                            "check_out_time": "2026-08-20T17:31:00+08:00",
-                        }
-                    ]
-                },
-            },
-        )
+        item = _task("wangwu@company.com", "2026-08-20T08:31:00+08:00", "2026-08-20T17:31:00+08:00")
+        del item["day"]  # 真实响应里 day 是整数 YYYYMMDD；这里模拟"没给日期"
+        return httpx.Response(200, json={"code": 0, "data": {"user_task_results": [item]}})
 
     result = _collect(config, handler)
 
@@ -237,7 +250,7 @@ def test_employee_type_is_sent_as_query_param_not_body(config):
             return httpx.Response(200, json=TOKEN_PAYLOAD)
         seen["params"] = dict(request.url.params)
         seen["body"] = json.loads(request.content)
-        return httpx.Response(200, json={"code": 0, "data": {"user_tasks": []}})
+        return httpx.Response(200, json={"code": 0, "data": {"user_task_results": []}})
 
     client = _client(handler)
     lark_attendance.collect(
@@ -258,7 +271,7 @@ def test_dates_are_integers_in_yyyymmdd_format(config):
         if "tenant_access_token" in str(request.url):
             return httpx.Response(200, json=TOKEN_PAYLOAD)
         seen["body"] = json.loads(request.content)
-        return httpx.Response(200, json={"code": 0, "data": {"user_tasks": []}})
+        return httpx.Response(200, json={"code": 0, "data": {"user_task_results": []}})
 
     client = _client(handler)
     lark_attendance.collect(
@@ -280,7 +293,7 @@ def test_user_ids_is_sent_in_body(config):
         if "tenant_access_token" in str(request.url):
             return httpx.Response(200, json=TOKEN_PAYLOAD)
         seen["body"] = json.loads(request.content)
-        return httpx.Response(200, json={"code": 0, "data": {"user_tasks": []}})
+        return httpx.Response(200, json={"code": 0, "data": {"user_task_results": []}})
 
     client = _client(handler)
     lark_attendance.collect(
@@ -307,3 +320,170 @@ def test_business_error_code_is_surfaced_not_swallowed(config):
 
     assert result.success is False
     assert "employeeNos is empty" in result.error_message
+
+
+# ==================================== v1.8.4：解析真实响应结构（缺陷修复的回归网）
+# 缺陷本体：代码读的是猜想的 `data.user_tasks` 与 `check_in_time`/`check_out_time`/
+# `check_date`/`status`，这些键在真实响应里都不存在 → 真实打卡被静默丢成
+# `success=True, count=0`，日报一路渲染成「今日无记录」。
+# 下面这组夹具用**实测响应**（2026-10-13）的形状，锁住这个缺陷。
+
+REAL_DAY = date(2026, 10, 13)
+REAL_RESPONSE = {
+    "code": 0,
+    "data": {
+        "user_task_results": [
+            {
+                "user_id": "emp_0001",
+                "day": 20261013,
+                "employee_name": "示例员工",
+                "group_id": "7000000000000000001",
+                "shift_id": "8",
+                "result_id": "7000000000000000002",
+                "records": [
+                    {
+                        "check_in_result": "Lack",
+                        "check_out_result": "Normal",
+                        "check_in_result_supplement": "None",
+                        "check_out_result_supplement": "None",
+                        "check_in_shift_time": "1791853200",
+                        "check_out_shift_time": "1791885600",
+                        "check_in_record_id": "",
+                        "check_out_record_id": "7000000000000000003",
+                        "task_shift_type": 0,
+                        "check_out_record": {
+                            "check_time": "1791894294",
+                            "user_id": "emp_0001",
+                            "creator_id": "emp_0001",
+                            "record_id": "7000000000000000003",
+                            "device_id": "0000000000000000000000000000000000000000000000000000000000000000",
+                            "type": 0,
+                            "is_field": False,
+                            "is_wifi": False,
+                            "latitude": 0,
+                            "longitude": 0,
+                            "comment": "",
+                            "ssid": "",
+                            "bssid": "",
+                            "external_id": "",
+                            "photo_urls": [],
+                        },
+                    }
+                ],
+            }
+        ]
+    },
+}
+
+
+def test_real_response_shape_is_parsed(config):
+    """实测响应（签到 Lack + 签退 20:24:54）必须被解析出来，而不是 0 条。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "tenant_access_token" in str(request.url):
+            return httpx.Response(200, json=TOKEN_PAYLOAD)
+        return httpx.Response(200, json=REAL_RESPONSE)
+
+    result = _collect(config, handler)
+
+    assert result.success is True
+    assert len(result.records) == 1
+
+    record = result.records[0]
+    assert record.employee_id == "emp_0001"
+    assert record.date == REAL_DAY
+    assert record.check_in is None
+    assert record.check_out == datetime(2026, 10, 13, 20, 24, 54, tzinfo=TZ)
+    assert record.work_hours == 0.0
+    assert record.status == "签到缺失"  # v1.8.4 新增状态
+
+
+def test_multiple_shifts_take_earliest_check_in_and_latest_check_out(config):
+    """一天多段班次 → 取最早签到 + 最晚签退。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "tenant_access_token" in str(request.url):
+            return httpx.Response(200, json=TOKEN_PAYLOAD)
+        item = _task(
+            "zhangsan@company.com",
+            "2026-08-20T09:30:00+08:00",
+            "2026-08-20T12:00:00+08:00",
+        )
+        second = _task(
+            "zhangsan@company.com",
+            "2026-08-20T14:00:00+08:00",
+            "2026-08-20T19:00:00+08:00",
+        )
+        item["records"] = item["records"] + second["records"]
+        return httpx.Response(200, json={"code": 0, "data": {"user_task_results": [item]}})
+
+    result = _collect(config, handler)
+
+    record = result.records[0]
+    assert record.check_in == datetime(2026, 8, 20, 9, 30, tzinfo=TZ)
+    assert record.check_out == datetime(2026, 8, 20, 19, 0, tzinfo=TZ)
+    assert record.work_hours == 9.5
+
+
+def test_day_without_any_punch_is_marked_absent(config):
+    """既无签到也无签退 → 缺勤（不是默默丢成 0 条）。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "tenant_access_token" in str(request.url):
+            return httpx.Response(200, json=TOKEN_PAYLOAD)
+        item = {
+            "user_id": "zhangsan@company.com",
+            "day": 20260820,
+            "records": [{"check_in_result": "Lack", "check_out_result": "Lack"}],
+        }
+        return httpx.Response(200, json={"code": 0, "data": {"user_task_results": [item]}})
+
+    result = _collect(config, handler)
+
+    assert len(result.records) == 1
+    assert result.records[0].status == "缺勤"
+    assert result.records[0].work_hours == 0.0
+
+
+class _CapturedLogs(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+def test_unexpected_response_shape_logs_a_warning_instead_of_silent_zero(config):
+    """响应结构变了必须出声 —— 静默返回 0 条正是这次缺陷藏了三个月的原因。"""
+    handler_logs = _CapturedLogs()
+    target = logging.getLogger("collector.lark_attendance")
+    target.addHandler(handler_logs)
+    target.setLevel(logging.WARNING)
+    try:
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "tenant_access_token" in str(request.url):
+                return httpx.Response(200, json=TOKEN_PAYLOAD)
+            return httpx.Response(200, json={"code": 0, "data": {"items": []}})
+
+        result = _collect(config, handler)
+    finally:
+        target.removeHandler(handler_logs)
+
+    assert result.success is True
+    assert result.records == []
+    warnings = [r for r in handler_logs.records if r.levelno == logging.WARNING]
+    assert warnings, "响应里没有 user_task_results 时必须打 WARNING"
+    assert "response_keys" in getattr(warnings[0], "__dict__", {})
+
+
+def test_epoch_second_strings_are_parsed():
+    """check_time 是纪元秒的数字字符串；毫秒也能认（消息接口是毫秒）。"""
+    expected = datetime(2026, 10, 13, 20, 24, 54, tzinfo=TZ)
+
+    assert lark_attendance._parse_datetime("1791894294") == expected
+    assert lark_attendance._parse_datetime("1791894294000") == expected
+    assert lark_attendance._parse_datetime(1791894294) == expected
+    assert lark_attendance._parse_datetime("") is None
+    assert lark_attendance._parse_datetime(None) is None

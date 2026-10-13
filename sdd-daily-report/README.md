@@ -334,7 +334,7 @@ v1.2 的前端是用 **OpenDesign** 迭代出来的，过程留了档：
 | `tests/test_lark_task.py` | 7 | 飞书任务采集 |
 | `tests/test_lark_msg.py` | 23 | 飞书群消息采集（关键词过滤 + 敏感词剔除 + v1.8.2 五种时间戳形态 + v1.8.3 排除应用自身消息） |
 | `tests/test_attendance.py` | 12 | 飞书考勤采集（v1.1 新增） |
-| `tests/test_generator.py` | 41 | 日报生成（含 v1.1 考勤逻辑、v1.3 双 ID 身份映射与「今日无记录」渲染、v1.5 提交摘要截断与条目分组、v1.6 邮件卡片版式与计数/总结句、v1.7 配色白名单与成员名条、v1.8 工程进展段与可配主题） |
+| `tests/test_generator.py` | 41 | 日报生成（含 v1.1 考勤逻辑、v1.3 双 ID 身份映射与「今日无记录」渲染、v1.5 提交摘要截断与条目分组、v1.6 邮件卡片版式与计数/总结句、v1.7 配色白名单与成员名条、v1.8 工程进展段与可配主题、v1.8.4 考勤行缺失侧呈现） |
 | `tests/test_repo_progress.py` | 29 | 工程进展采集（v1.8 新增，自造临时 Git 仓库）：仓库定位、当日计数、版本号取最高、变更起点判定、闭环判定、规范覆盖率注入与降级 |
 | `tests/test_email.py` | 7 | SMTP 推送 |
 | `tests/test_lark_bot.py` | 8 | 飞书机器人推送 |
@@ -376,7 +376,7 @@ python -m pytest tests/ -v
    `_attendance_user_ids()`（从 `members[].lark_employee_id` 去重取名单）；
    `formatter.aggregate()` 增加 `by_lark_employee` 映射（空 ID 不入表）；
    `template.render_markdown()` 的考勤分支由两段变三段。
-6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.8.3 后为 412），规范与代码一起提交（书图 7-8 的闭环要求）。
+6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.8.4 后为 418），规范与代码一起提交（书图 7-8 的闭环要求）。
 
 真实跑通的证据（2026-10-09 那次）：日志从
 `飞书考勤采集失败 error: ... employeeNos is empty` 变成
@@ -589,6 +589,32 @@ v1.6 的邮件版式是照需求参考稿（一张手机邮件截图）做出来
   并把排除条数写进「飞书消息采集完成」日志的 `own_app_excluded` 字段。
 - 测试：`tests/test_lark_msg.py` 20 → 23（机器人消息即使命中关键词也不进结果、
   `cli_` 前缀兜底、真人消息照常按关键词过滤，并断言日志里的排除条数）。
+
+### v1.8.4：考勤一直在「今日无记录」，其实是解析读错了键名
+
+- **触发**：用户问「飞书有没有收到打卡信息」。探针打原始响应发现
+  `POST /attendance/v1/user_tasks/query` 返回 **200 / code 0**，`data.user_task_results`
+  里明明有记录 —— 而采集器返回 `success=True, count=0`。
+- **根因**：v1.1 的解析代码按键名是**猜的**：读 `data.user_tasks` 与
+  `check_in_time` / `check_out_time` / `check_date` / `status`，这些键在真实响应里
+  都不存在。读不到就「成功地返回 0 条」，日报一路渲染成「今日无记录」——
+  **看起来像"没打卡"，其实是"没解析到"**。
+- **规范链改动**（缺陷修复 + 规范缺陷，同一个提交）：
+
+| 层级 | 改了什么 |
+|---|---|
+| `design.md` §3.0.1（新增） | 真实响应结构、字段映射、纪元秒/毫秒的量级判别、多段班次合并规则、六行状态判定表、「解析不到必须出声」、缺失侧呈现口径 |
+| `contracts/data-models.md` | `status` 枚举补 **签到缺失**（原枚举只有签退缺失这一侧） |
+| `contracts/api-spec.yaml` | 同枚举同步；`behaviors` 补真实响应结构与两侧缺失口径 |
+| `tasks.md` Task 11 | 新增 6 条 v1.8.4 验收标准（解析真实键、纪元秒、多段班次、签到缺失、无 `user_task_results` 必须 WARNING、夹具必须用真实结构） |
+| `collector/lark_attendance.py` | 读 `user_task_results`；`_merge_shifts()` 取最早签到/最晚签退；`_parse_datetime()` 认数字字符串；`_parse_date()` 认整数 `YYYYMMDD`；响应结构变了打 WARNING 并带实际键名 |
+| `generator/template.py` | 新增 `_attendance_span()`：缺哪一侧写「无签到」/「无签退」，不再把两侧都写成「签退缺失」 |
+| `tests/test_attendance.py` | 12 → 17：夹具整体换成**实测响应结构**，补签到缺失、多段班次、缺勤、WARNING、纪元秒解析五组用例 |
+
+- **为什么藏了这么久**：测试夹具是照着自己猜的结构写的，
+  代码和测试**用同一套错误假设**，于是永远自洽。
+- 一键复现：`python main.py --date 2026-10-13 --no-push`（考勤行应显示
+  `状态：签到缺失（无签到 - 20:24）`）。
 
 ## 工程化配套（第 3、8、9 章）
 

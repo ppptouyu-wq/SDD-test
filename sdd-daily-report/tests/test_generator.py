@@ -788,3 +788,42 @@ def test_report_title_never_hardcodes_personal_attributes():
     assert "研一" not in source
     assert "孔子博" not in source
 
+
+# ---- v1.9：概览计数卡下方的一行「当日代码变更行数」 ----
+# 触发：老师要求在邮件日报里"加一行能看见当天代码迭代提交的行数"。
+# 起点判定为需求变更（呈现什么内容属产品行为）→ proposal.md §3.1 → design.md §6.7(2)。
+
+
+def test_email_change_line_sums_lines_across_members_and_repositories():
+    """行数汇总要跨成员、跨仓库合计，并紧跟三张计数卡（proposal.md §3.1 v1.9）。"""
+    first = _member_with_data()
+    second = _member_with_data("李四", "lisi")
+    extra = copy.deepcopy(first.commits[0])
+    extra.repo, extra.additions, extra.deletions = "acme/other", 7, 3
+    second.commits.append(extra)
+
+    report = formatter.generate([first, second], DAY, "平台研发组")
+    html = report.html
+
+    assert template.commit_line_totals(report) == (247, 39)  # 120+120+7 / 18+18+3
+    assert "当日代码变更" in html
+    assert "+247" in html
+    assert "-39" in html
+    # 顺序：三张计数卡 → 这一行 → 今日总结（补的是"量"，不能跑到总结后面）
+    assert html.index(">代码提交</div>") < html.index("当日代码变更")
+    assert html.index("当日代码变更") < html.index("今日总结")
+
+
+def test_email_change_line_shows_zeros_when_there_is_no_commit():
+    """当日没有提交时显示 +0 / -0 行，不隐藏、不留白（proposal.md §3.1 v1.9）。"""
+    member = _member_with_data()
+    member.commits = []
+
+    report = formatter.generate([member], DAY, "平台研发组")
+
+    assert template.commit_line_totals(report) == (0, 0)
+    assert "当日代码变更" in report.html
+    assert "+0" in report.html
+    assert "-0" in report.html
+
+

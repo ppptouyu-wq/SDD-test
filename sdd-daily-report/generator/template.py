@@ -421,6 +421,17 @@ def overview_counts(report: DailyReport) -> tuple[int, int, int]:
     return commits, tasks, messages
 
 
+def commit_line_totals(report: DailyReport) -> tuple[int, int]:
+    """当日全部提交的行数合计：(新增, 删除)（v1.9，design.md §6.7(2)）。
+
+    跨成员、跨仓库直接相加 —— 这里回答"今天一共改了多少行"，
+    是「今日概览」三张计数卡（回答"提交了几次"）的补充。
+    """
+    added = sum(commit.additions for member in report.members for commit in member.commits)
+    removed = sum(commit.deletions for member in report.members for commit in member.commits)
+    return added, removed
+
+
 def summary_sentence(commits: int, tasks: int, messages: int) -> str:
     """今日总结句。
 
@@ -489,6 +500,18 @@ def _email_stat_card(value: int, label: str) -> str:
         f"{value}</div>"
         f'<div style="font-size:13px;color:{EMAIL_FG_2};margin-top:6px;">{label}</div>'
         "</td></tr></table></td>"
+    )
+
+
+def _email_change_line(added: int, removed: int) -> str:
+    """「今日概览」计数卡下方的一行代码变更行数（v1.9，design.md §6.7(2)）。
+
+    加号行用品牌色、减号行用次级色：一眼能看出"净增还是净删"，但两侧都不是告警色。
+    """
+    return (
+        f'<div style="margin:10px 2px 0;font-size:13px;color:{EMAIL_FG_2};">'
+        f'当日代码变更 <strong style="color:{EMAIL_BRAND_DEEP};">+{added}</strong>'
+        f' / <strong style="color:{EMAIL_FG_2};">-{removed}</strong> 行</div>'
     )
 
 
@@ -602,7 +625,8 @@ def render_email_html(report: DailyReport) -> str:
     `DailyReport` 上现算，从已经拍平的 Markdown 反推既脆弱又不诚实。
     Markdown 仍然是落库的原件（`report.markdown`），HTML 只是它的另一种呈现。
 
-    五段：标题区 → 今日概览 → 今日总结 → 今日工程进展（v1.8，团队级）→ 按成员分组。
+    五段：标题区 → 今日概览（三张计数卡 + v1.9 的一行代码变更行数）→ 今日总结 →
+    今日工程进展（v1.8，团队级）→ 按成员分组。
     """
     sources = report.sources or {}
     attendance_failed = bool(sources) and sources.get(ATTENDANCE_SOURCE) is False
@@ -612,6 +636,7 @@ def render_email_html(report: DailyReport) -> str:
     )
 
     commits, tasks, messages = overview_counts(report)
+    added, removed = commit_line_totals(report)  # v1.9：概览卡下方那一行
     day_text = _escape(report.date.isoformat())
     blocks: list[str] = []
 
@@ -650,6 +675,8 @@ def render_email_html(report: DailyReport) -> str:
         + _email_stat_card(messages, "协作讨论")
         + "</tr></table>"
     )
+    # v1.9：概览三卡只回答"提交了几次"，下面这一行回答"改了多少行"
+    blocks.append(_email_change_line(added, removed))
 
     # ---- 3. 今日总结 ----
     blocks.append(

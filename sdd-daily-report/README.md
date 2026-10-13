@@ -61,7 +61,7 @@
    | ② 真实 GitHub 仓库（2026-04-24，不推送） | 拉真实提交 |
    | ③ 健康检查（--check） | 逐项检查配置 |
    | ④ 今天（真实推送，慎用） | 会真的发邮件/推飞书 |
-   | ⑤ 跑全部测试（pytest） | 399 个用例 |
+   | ⑤ 跑全部测试（pytest） | 402 个用例 |
    | ⑥ 只跑当前打开的测试文件 | 调试单个用例 |
    | ⑦ 展示页：本地只读查看已生成的日报 | 起本地网页看日报（v1.2 新增） |
 
@@ -335,7 +335,7 @@ v1.2 的前端是用 **OpenDesign** 迭代出来的，过程留了档：
 | `tests/test_lark_msg.py` | 13 | 飞书群消息采集（关键词过滤 + 敏感词剔除） |
 | `tests/test_attendance.py` | 12 | 飞书考勤采集（v1.1 新增） |
 | `tests/test_generator.py` | 41 | 日报生成（含 v1.1 考勤逻辑、v1.3 双 ID 身份映射与「今日无记录」渲染、v1.5 提交摘要截断与条目分组、v1.6 邮件卡片版式与计数/总结句、v1.7 配色白名单与成员名条、v1.8 工程进展段与可配主题） |
-| `tests/test_repo_progress.py` | 26 | 工程进展采集（v1.8 新增，自造临时 Git 仓库）：仓库定位、当日计数、版本号取最高、变更起点判定、闭环判定、规范覆盖率注入与降级 |
+| `tests/test_repo_progress.py` | 29 | 工程进展采集（v1.8 新增，自造临时 Git 仓库）：仓库定位、当日计数、版本号取最高、变更起点判定、闭环判定、规范覆盖率注入与降级 |
 | `tests/test_email.py` | 7 | SMTP 推送 |
 | `tests/test_lark_bot.py` | 8 | 飞书机器人推送 |
 | `tests/test_main.py` | 21 | `main.py` 入口：编排、`load_dotenv`、`load_tasks_file`、CLI 退出码、路径锚定、v1.3 考勤名单接线、v1.4 仅工作日开关默认关闭 |
@@ -376,7 +376,7 @@ python -m pytest tests/ -v
    `_attendance_user_ids()`（从 `members[].lark_employee_id` 去重取名单）；
    `formatter.aggregate()` 增加 `by_lark_employee` 映射（空 ID 不入表）；
    `template.render_markdown()` 的考勤分支由两段变三段。
-6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.8 后为 399），规范与代码一起提交（书图 7-8 的闭环要求）。
+6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.8 后为 402），规范与代码一起提交（书图 7-8 的闭环要求）。
 
 真实跑通的证据（2026-10-09 那次）：日志从
 `飞书考勤采集失败 error: ... employeeNos is empty` 变成
@@ -527,7 +527,7 @@ v1.6 的邮件版式是照需求参考稿（一张手机邮件截图）做出来
 | `collector/repo_progress.py`（新） | 标准库 `subprocess` 调 git：`git rev-parse --show-toplevel` 定位仓库根、`git log --name-only` 取当日文件清单（`-c core.quotepath=false`，否则中文路径被转义）；**不引入新依赖** |
 | `generator/template.py` | 新增 `_progress_callout()` 与第 4 段；`report_title()` 支持 `subject_pattern`/`grade`/`owner`，未知占位符原样保留 |
 | `main.py` | 新增 `SOURCE_REPO_PROGRESS`；覆盖率用延迟 import 的 callable 注入（采集层不依赖治理层）；`sources` 与「全部数据源不可用」判定都**排除**这个板块 |
-| 测试 | 新增 `tests/test_repo_progress.py`（26 条，自造临时 Git 仓库，不依赖本仓库历史）与 `test_generator.py` 的 6 条版式/主题测试 |
+| 测试 | 新增 `tests/test_repo_progress.py`（29 条，自造临时 Git 仓库，不依赖本仓库历史）与 `test_generator.py` 的 6 条版式/主题测试 |
 
 三个设计决定与理由：
 
@@ -542,6 +542,22 @@ v1.6 的邮件版式是照需求参考稿（一张手机邮件截图）做出来
   随 payload 一起落库，将来展示页要用，不必重新采集。
 
 一键复现：`python main.py --date 2026-10-12 --no-push`（第 4 段会写当天真实的提交数与迭代版本）。
+
+### v1.8.1：修掉变更起点判定在「项目嵌在子目录」布局下失效
+
+真跑当天日报时（`python main.py`）发现邮件里写着「变更起点：缺陷修复」，但当天明明改过
+`specs/proposal.md`。根因：git log 给出的路径是 `sdd-daily-report/specs/proposal.md`，
+而判定表比的是常量 `specs/proposal.md` —— 前缀对不上，规范文件一个都没被认出来，
+需求变更被降级成「缺陷修复」，规范链与闭环判定也跟着失准。
+
+按书图 7-8 判定：这不算纯代码 bug（判定表本身没写清"路径以什么为基准"），
+所以同一个提交里既改代码，也回补规范。
+
+| 层级 | 改了什么 |
+|---|---|
+| 规范 | `specs/design.md` §3.4：判定表补一句「路径先按项目根归一（截到 `specs/` 这一段）再比对」 |
+| 代码 | `collector/repo_progress.py`：新增 `relative_to_project()`，判定与展示的规范链统一归一到项目根 |
+| 测试 | `tests/test_repo_progress.py` 26 → 29（两组嵌套路径参数化 + 一条"临时仓库里项目嵌子目录"的端到端） |
 
 ## 工程化配套（第 3、8、9 章）
 

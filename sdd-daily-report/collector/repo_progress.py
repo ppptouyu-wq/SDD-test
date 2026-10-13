@@ -136,13 +136,27 @@ def highest_version(subjects: list[str]) -> str:
     return best_text
 
 
+def relative_to_project(path: str) -> str:
+    """把 git 给出的路径归一成"相对项目根"的形式（design.md §3.4）。
+
+    仓库把项目放在子目录里时（本仓库是 ``sdd-daily-report/``），git log 给出的路径是
+    ``sdd-daily-report/specs/proposal.md``。判定表比的是 ``specs/...``，所以先截到
+    ``specs`` 这一段；没有这一段的路径原样返回。
+    """
+    parts = [part for part in path.replace("\\", "/").split("/") if part not in ("", ".")]
+    if "specs" in parts:
+        return "/".join(parts[parts.index("specs") :])
+    return "/".join(parts)
+
+
 def decide_change_layer(files: list[str]) -> str:
     """按"受影响的最上游规范层"判定变更类型（design.md §3.4 判定表）。"""
-    if PROPOSAL_FILE in files:
+    normalized = [relative_to_project(path) for path in files]
+    if PROPOSAL_FILE in normalized:
         return CHANGE_LAYER_PROPOSAL
-    if any(path in (DESIGN_FILE,) or path.startswith(CONTRACTS_DIR) for path in files):
+    if any(path == DESIGN_FILE or path.startswith(CONTRACTS_DIR) for path in normalized):
         return CHANGE_LAYER_DESIGN
-    if TASKS_FILE in files:
+    if TASKS_FILE in normalized:
         return CHANGE_LAYER_TASKS
     if files:
         return CHANGE_LAYER_CODE
@@ -150,7 +164,7 @@ def decide_change_layer(files: list[str]) -> str:
 
 
 def _is_spec(path: str) -> bool:
-    return path.startswith(SPEC_DIR)
+    return relative_to_project(path).startswith(SPEC_DIR)
 
 
 def collect(
@@ -184,7 +198,8 @@ def collect(
     commits = _parse_log(output)
     subjects = [subject for subject, _ in commits]
     all_files = [path for _, files in commits for path in files]
-    spec_changed = sorted({path for path in all_files if _is_spec(path)})
+    # 路径归一后再展示：日报上写 `specs/proposal.md` 比 `sdd-daily-report/specs/proposal.md` 干净
+    spec_changed = sorted({relative_to_project(path) for path in all_files if _is_spec(path)})
     code_changed = any(not _is_spec(path) for path in all_files)
     same_commit = any(
         any(_is_spec(path) for path in files) and any(not _is_spec(path) for path in files)

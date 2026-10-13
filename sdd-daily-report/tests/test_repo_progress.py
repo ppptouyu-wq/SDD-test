@@ -140,11 +140,45 @@ def test_commits_outside_the_window_are_ignored(repo: Path):
         (["specs/tasks.md", "tests/test_main.py"], repo_progress.CHANGE_LAYER_TASKS),
         (["main.py", "generator/template.py"], repo_progress.CHANGE_LAYER_CODE),
         ([], repo_progress.CHANGE_LAYER_UNKNOWN),
+        # 项目嵌在子目录里时，git 给出的路径带前缀 —— 必须先归一（v1.8 真跑时踩到）
+        (
+            ["sdd-daily-report/specs/proposal.md", "sdd-daily-report/main.py"],
+            repo_progress.CHANGE_LAYER_PROPOSAL,
+        ),
+        (
+            ["app/specs/contracts/api-spec.yaml", "app/shared/models.py"],
+            repo_progress.CHANGE_LAYER_DESIGN,
+        ),
     ],
 )
 def test_change_layer_follows_the_most_upstream_spec_file(files: list[str], expected: str):
     """书里的"找到受影响的最上游层级，从那里开始修改"，落地成对路径的判定。"""
     assert repo_progress.decide_change_layer(files) == expected
+
+
+def test_nested_project_layout_is_normalized_to_the_project_root(repo: Path):
+    """项目放在子目录里（本仓库的真实布局）时，判定与展示都要截到项目根。
+
+    未归一时的真实症状：`sdd-daily-report/specs/proposal.md` 比不过常量
+    `specs/proposal.md`，于是需求变更被误判成"缺陷修复"、规范链一片空白
+    （v1.8 真跑时踩到，`design.md` §3.4 因此补了"路径按项目根归一"一句）。
+    """
+    _commit(
+        repo,
+        "feat(v1.8): 需求变更，规范与代码同一个提交",
+        {
+            "sdd-daily-report/specs/proposal.md": "# 需求\n",
+            "sdd-daily-report/specs/design.md": "# 设计\n",
+            "sdd-daily-report/collector/repo_progress.py": "print('x')\n",
+        },
+    )
+
+    progress = repo_progress.collect(repo, SINCE, UNTIL).records[0]
+
+    assert progress.change_layer == repo_progress.CHANGE_LAYER_PROPOSAL
+    assert progress.spec_changed == ["specs/design.md", "specs/proposal.md"]
+    assert progress.code_changed is True
+    assert progress.same_commit is True
 
 
 def test_change_layer_is_decided_by_paths_not_by_the_commit_message(repo: Path):

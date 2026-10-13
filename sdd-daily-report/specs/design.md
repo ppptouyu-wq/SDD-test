@@ -316,6 +316,16 @@ lark_msg.collect(
     until: datetime            # 结束时间
 ) -> list[MessageRecord]       # 返回消息记录列表
 
+# lark_msg.collect 的过滤口径（v1.8.3 明确第 2 条）
+#   1. 跳过系统消息：入群提示、群名变更等 msg_type='system'，其 sender.id 为空串
+#   2. **排除应用自身发送的消息**：sender.sender_type == "app"，或 sender.id 就是本应用的
+#      app_id（cli_ 开头）。理由：机器人推到群里的日报会命中「项目」「需求」等关键词，
+#      但它不是"协作沟通"；而且它的 sender 不在成员身份映射表里，归属匹配只能**碰巧**
+#      把它丢掉 —— 那是"运气"，不是规则。显式排除后，即使将来成员表里出现应用 ID，
+#      机器人自己的推送也不会变成某个成员的"协作沟通"（proposal §3.1 v1.8.3）
+#   3. 关键词过滤：任一关键词命中即保留（keywords 为空则全收）
+#   4. 敏感词过滤：命中即剔除
+
 # 采集层接口（v1.1 新增）
 lark_attendance.collect(
     since: date,               # 起始日期

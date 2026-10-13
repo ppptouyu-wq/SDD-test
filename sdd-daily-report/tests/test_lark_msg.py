@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 
 import httpx
@@ -26,10 +27,10 @@ UNTIL = datetime(2026, 8, 20, 23, 59, tzinfo=timezone.utc)
 TOKEN_PAYLOAD = {"code": 0, "tenant_access_token": "t-abc", "expire": 7200}
 
 
-def _message(sender: str, text: str) -> dict:
+def _message(sender: str, text: str, *, sender_type: str = "user") -> dict:
     return {
         "message_id": f"om_{abs(hash(text)) % 10000}",
-        "sender": {"id": sender, "sender_type": "user"},
+        "sender": {"id": sender, "sender_type": sender_type},
         "body": {"content": json.dumps({"text": text}, ensure_ascii=False)},
         "create_time": "1755676800000",
         "chat_name": "平台研发组",
@@ -358,3 +359,77 @@ def test_parse_timestamp_falls_back_to_now_for_garbage():
     after = datetime.now(tz=timezone.utc)
 
     assert before <= parsed <= after
+
+
+# ------------------------------------- 排除应用自身消息（v1.8.3，Task 5 变更）
+
+
+class _CapturedLogs(logging.Handler):
+    """把 logger 的记录收进列表，用来断言"排除条数"这类结构化字段。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - 简单转发
+        self.records.append(record)
+
+
+def _collect_with_logs(config, handler, no_sleep):
+    capture = _CapturedLogs()
+    lark_msg.logger.addHandler(capture)
+    try:
+        result = _collect(config, handler, no_sleep)
+    finally:
+        lark_msg.logger.removeHandler(capture)
+    return result, capture.records
+
+
+def _messages_handler(items):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "tenant_access_token" in str(request.url):
+            return httpx.Response(200, json=TOKEN_PAYLOAD)
+        return httpx.Response(200, json={"code": 0, "data": {"items": items}})
+
+    return handler
+
+
+def test_own_app_messages_are_excluded_even_when_they_match_keywords(config, no_sleep):
+    """验收标准（v1.8.3）：应用自己推的消息不进「协作沟通」，即使命中了关键词。
+
+    实测场景：机器人把日报推到群里，正文含「项目」「需求」，能过关键词过滤；
+    但发信人是应用自己（`sender_type='app'`，`id` = `app_id`），不是人在协作。
+    """
+    bot = _message(config.lark.app_id, "这个项目的需求我下午确认", sender_type="app")
+    human = _message("ou_human_user_0001", "这个项目的需求我下午确认")
+
+    result, logs = _collect_with_logs(config, _messages_handler([bot, human]), no_sleep)
+
+    assert result.success is True
+    assert len(result.records) == 1
+    assert result.records[0].sender.startswith("ou_")
+
+    done = [r for r in logs if r.getMessage() == "飞书消息采集完成"]
+    assert done, "采集完成日志必须写出来（排除条数要对得上账）"
+    assert done[0].own_app_excluded == 1
+
+
+def test_bot_sender_is_excluded_by_the_cli_prefix_too(config, no_sleep):
+    """sender_type 缺失时也要拦住：`cli_` 前缀就是应用自己的 ID。"""
+    item = _message(config.lark.app_id, "这个是项目发布的需求")
+    item["sender"].pop("sender_type")
+
+    result = _collect(config, _messages_handler([item]), no_sleep)
+
+    assert result.records == []
+
+
+def test_human_messages_are_still_filtered_by_keywords(config, no_sleep):
+    """真人消息不受这条规则影响，照常走关键词过滤。"""
+    hit = _message("ou_abc", "这个项目的需求我下午确认")
+    miss = _message("ou_abc", "中午一起吃饭吗")
+
+    result = _collect(config, _messages_handler([hit, miss]), no_sleep)
+
+    assert len(result.records) == 1
+    assert "需求" in result.records[0].content

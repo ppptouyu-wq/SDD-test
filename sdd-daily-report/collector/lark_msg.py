@@ -118,6 +118,26 @@ def is_sensitive(content: str, sensitive_keywords: list[str] | None = None) -> b
     return any(word in content for word in blocked)
 
 
+def is_own_app_message(item: dict, app_id: str = "") -> bool:
+    """该消息是否由**本应用自己**（机器人）发出。
+
+    飞书 `sender` 结构里，机器人消息的 `sender_type == 'app'`、`id` 是应用自己的
+    `app_id`（`cli_` 开头）。为什么要显式排除（v1.8.3，proposal §3.1）：
+
+      - 机器人推到群里的日报正文含「项目」「需求」等关键词，能过关键词过滤；
+      - 但它的 sender 不在成员身份映射表里，归属匹配**碰巧**把它丢掉 ——
+        那是"运气"，不是规则：一旦成员表的 `lark` 里出现应用 ID，机器人自己的推送
+        就会变成某个成员的"协作沟通"。
+    """
+    sender = item.get("sender") or {}
+    if str(sender.get("sender_type") or "").strip() == "app":
+        return True
+    identifier = str(sender.get("id") or "").strip()
+    if not identifier:
+        return False
+    return identifier == app_id or identifier.startswith("cli_")
+
+
 def collect(
     chat_id: str,
     keywords: list[str],
@@ -146,6 +166,7 @@ def collect(
     tokens = token_manager or _build_token_provider(client, config)
 
     records: list[MessageRecord] = []
+    own_app_count = 0  # 被排除的应用自身消息条数（v1.8.3，写进日志便于核对）
     try:
         page_token: str | None = None
         while True:
@@ -167,6 +188,12 @@ def collect(
                 # 没有真实发送者，正文是模板字符串（如 "{from_user} invited ..."），
                 # 收进日报只会是噪声。实测确认其 sender.id 为空串。
                 if str(item.get("msg_type", "")) == "system":
+                    continue
+
+                # 跳过应用自身发送的消息（v1.8.3）：机器人推的日报会命中关键词，
+                # 但它不是"协作沟通"，必须在关键词过滤之前显式排除。
+                if is_own_app_message(item, config.app_id):
+                    own_app_count += 1
                     continue
 
                 content = _extract_text(item)
@@ -192,7 +219,13 @@ def collect(
 
         logger.info(
             "飞书消息采集完成",
-            extra={"source": "lark_msg", "count": len(records), "chat_id": chat_id},
+            extra={
+                "source": "lark_msg",
+                "count": len(records),
+                "chat_id": chat_id,
+                # 应用自身消息的排除条数（v1.8.3）：机器人推了几条、被挡掉几条，日志里能对上账
+                "own_app_excluded": own_app_count,
+            },
         )
         return CollectResult.ok(records)
     except CollectorError as exc:

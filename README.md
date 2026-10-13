@@ -114,11 +114,11 @@ python main.py --serve --db 其他库.db  # 换日报库
 
 | 目录 | 内容 | 测试 |
 |---|---|---|
-| `sdd-daily-report/` | **主项目**「智能日报生成器」（第 4-7 章）。含 Agent 设计模式、团队实践与度量、适用性自评、Harness 审计、本地只读展示页（v1.2 迭代）、飞书双 ID 考勤接线（v1.3 迭代）、默认每天可跑（v1.4 迭代）、提交摘要渲染（v1.5 迭代）、提交条目分组呈现（v1.5.1 修复）、邮件卡片式可视化版式（v1.6 迭代）、邮件版式换色与结构微调（v1.7 迭代） | 366 通过 |
+| `sdd-daily-report/` | **主项目**「智能日报生成器」（第 4-7 章）。含 Agent 设计模式、团队实践与度量、适用性自评、Harness 审计、本地只读展示页（v1.2 迭代）、飞书双 ID 考勤接线（v1.3 迭代）、默认每天可跑（v1.4 迭代）、提交摘要渲染（v1.5 迭代）、提交条目分组呈现（v1.5.1 修复）、邮件卡片式可视化版式（v1.6 迭代）、邮件版式换色与结构微调（v1.7 迭代）、工程进展板块与可配邮件主题（v1.8 迭代） | 399 通过 |
 | `kb-search/` | **案例项目**「知识库语义搜索工具」（第 1-2 章） | 109 通过、1 跳过 |
 | `brownfield-demo/` | **Brownfield 四步法**演示（第 7.4 节） | 50 通过 |
 
-合计 **525 个测试**。一键运行：
+合计 **558 个测试**。一键运行：
 
 ```bash
 python run_all_tests.py     # 需先安装 pytest
@@ -126,6 +126,25 @@ python run_all_tests.py     # 需先安装 pytest
 
 > 三个子项目都有名为 `tests` 的同名包，无法由单次 `pytest` 一起收集，
 > 因此用 `run_all_tests.py` 分别为每个项目启动一个 pytest 进程。
+
+### 仓库根还有一件额外交付（不属于书中内容）
+
+| 路径 | 内容 |
+|---|---|
+| `main.py` | 命令行入口：`session_start` / `handle_message` / `check` 三个子命令（无内容参数时从 stdin 读） |
+| `plugins/harness_plugin.py` | Agent Harness 插件：插件注册表、异步 workflow（`release`/`rollback`）、源码编辑 + 回滚快照、任务快照、审计 |
+| `plugins/harness.shell` | `.shell` 形态的会话脚本（内容是 Python，可 `ast.parse`）：声明插件与 `action`/`workflow`/`check`/`tasks` 四类模式串 |
+| `scripts/check_shell_test.py` | Harness 自检脚本（语法 + 契约完整性），`main.py check` 会复用它 |
+
+```bash
+python main.py session_start --mode autonomous          # 起会话，打印已注册插件
+python main.py handle_message --file payload.json       # 处理一条消息（action/workflow/tasks）
+python main.py check                                    # 自检：语法 + 契约
+python scripts/check_shell_test.py                      # 同一套检查的独立脚本入口
+```
+
+> 它刻意放在**仓库根**而不是 `sdd-daily-report/`：日报项目根已有一个受 `specs/` 约束的
+> `main.py`，覆盖它会破坏该项目的规范契约。这一件与书中项目无关，是额外练习。
 
 ## 怎么运行
 
@@ -253,7 +272,7 @@ SMTP_PASSWORD=你的 QQ 邮箱授权码     # 注意是"授权码"，不是登�
 | 第 3 章 | 工具链全景、四层生态、`docs/SDD开源框架对照.md`、`sdd_agents/framework.py`（图 3-7 决策树） |
 | 第 4 章 | `specs/proposal.md` + `specs/contracts/api-spec.yaml` |
 | 第 5 章 | `specs/design.md` + ADR-001/002/003 |
-| 第 6 章 | `specs/tasks.md`（Task 1-12）+ 子智能体并行调度 |
+| 第 6 章 | `specs/tasks.md`（Task 1-13）+ 子智能体并行调度 |
 | 第 7 章 | 三层测试、验证与迭代、v1.1 与 v1.2 两次需求变更迭代、Brownfield 补规范 |
 | 第 8 章 | 生成—评审、层级委托、护栏三明治、条件路由；`sdd_agents/harness.py`（Harness 审计） |
 | 第 9 章 | 三阶段/三角色/治理检查/度量；`team-templates/` |
@@ -288,7 +307,7 @@ python -m pytest tests/ -v
 | `tests/test_lark_task.py` | ✅ | 7 |
 | `tests/test_lark_msg.py` | ✅ | 13 |
 | `tests/test_attendance.py`（新增测试） | ✅ | 12 |
-| `tests/test_generator.py`（含新考勤逻辑、v1.5 提交摘要、v1.6 邮件版式、v1.7 配色白名单） | ✅ | 34 |
+| `tests/test_generator.py`（含新考勤逻辑、v1.5 提交摘要、v1.6 邮件版式、v1.7 配色白名单、v1.8 工程进展段与主题模板） | ✅ | 41 |
 | `tests/test_email.py` | ✅ | 7 |
 | `tests/test_lark_bot.py` | ✅ | 8 |
 | `tests/test_main.py` | ✅ | 21 |

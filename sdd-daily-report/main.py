@@ -18,11 +18,12 @@ import argparse
 import json
 import os
 import sys
+from collections.abc import Callable
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 
 from collector import github as github_collector
-from collector import lark_attendance, lark_msg, lark_task
+from collector import lark_attendance, lark_msg, lark_task, repo_progress
 from generator import formatter
 from notifier import email as email_notifier
 from notifier import lark_bot
@@ -30,7 +31,14 @@ from shared.calendar import is_working_day
 from shared.config import AppConfig, load_config
 from shared.errors import DailyReportError, NonWorkingDayError
 from shared.logger import get_logger
-from shared.models import AttendanceRecord, CollectResult, CommitRecord, MessageRecord, TaskRecord
+from shared.models import (
+    AttendanceRecord,
+    CollectResult,
+    CommitRecord,
+    MessageRecord,
+    RepoProgress,
+    TaskRecord,
+)
 from shared.storage import ReportStorage
 
 logger = get_logger("main")
@@ -46,6 +54,10 @@ SOURCE_GITHUB = "GitHub"
 SOURCE_LARK_TASK = "飞书任务"
 SOURCE_LARK_MSG = "飞书消息"
 SOURCE_LARK_ATTENDANCE = "飞书考勤"
+# v1.8：本机代码仓库的"工程数据源"。它**不是外部协作平台**，因此刻意不参与
+# sources 四态判定（design.md §3.4）：失败多是"这台机器上不是 Git 仓库"，
+# 那种情况属可解释的缺失，不该把整份日报打成 partial。
+SOURCE_REPO_PROGRESS = "工程进展"
 
 # 飞书考勤接口只接受 employee_id / employee_no 两种 ID 类型（实测：传 open_id 会被
 # 99992402 字段校验拒绝）。本项目统一按「员工ID」查询，取值与 config.yaml 中
@@ -67,6 +79,32 @@ def _attendance_user_ids(config: AppConfig) -> list[str]:
         if member.lark_employee_id:
             unique.setdefault(member.lark_employee_id, None)
     return list(unique)
+
+
+def _coverage_provider() -> Callable[[], str] | None:
+    """规范覆盖率取数（v1.8）。取不到就返回 None，表示"该项未记录"。
+
+    `sdd_agents.metrics` 是本项目的规范工具，**不是运行时依赖**，因此这里延迟导入；
+    任何异常都退化成"未记录"——工程进展是锦上添花，不该拖垮日报生成（design.md §6.8）。
+    """
+    try:
+        from sdd_agents.metrics import map_acceptance_to_tests
+    except Exception:  # noqa: BLE001 - 工具不可用时静默降级
+        return None
+
+    def _coverage() -> str:
+        coverage = map_acceptance_to_tests(PROJECT_ROOT)
+        return f"{coverage.covered}/{coverage.total} = {coverage.ratio:.1%}"
+
+    return _coverage
+
+
+def _progress_of(results: dict) -> RepoProgress | None:
+    """从采集结果里取出当日工程进展；取不到返回 None（邮件渲染中性空态）。"""
+    result = results.get(SOURCE_REPO_PROGRESS)
+    if result is None or not result.success or not result.records:
+        return None
+    return result.records[0]
 
 
 def collect_all(
@@ -116,6 +154,14 @@ def collect_all(
             employee_type=ATTENDANCE_EMPLOYEE_TYPE,
             user_ids=_attendance_user_ids(config),
         )
+        # v1.8：本机仓库的工程进展（唯一不联网的"数据源"）。它失败不影响其他源，
+        # 也不进 sources（见 SOURCE_REPO_PROGRESS 的注释）。
+        results[SOURCE_REPO_PROGRESS] = repo_progress.collect(
+            config.report.repo_path,
+            since,
+            until,
+            coverage=_coverage_provider(),
+        )
 
     for name, result in results.items():
         logger.info(
@@ -156,9 +202,17 @@ def run(
         raise NonWorkingDayError(target_day.isoformat())
 
     results = collect_all(config, target_day, mock=mock, tasks_file=tasks_file)
-    sources = {name: result.success for name, result in results.items()}
+    # v1.8：工程数据源不参与四态判定（design.md §3.4）—— 它既不该出现在
+    # `sources` 里，也不该把"外部数据源全挂"这种情况从 all_sources_failed
+    # 里救回来（否则一台有 git 仓库的机器会生成一份空日报）。
+    external = {
+        name: result
+        for name, result in results.items()
+        if name != SOURCE_REPO_PROGRESS
+    }
+    sources = {name: result.success for name, result in external.items()}
 
-    if not any(result.success for result in results.values()):
+    if not any(result.success for result in external.values()):
         # design.md §6.1："所有数据源都不可用 | 记录错误日志，发送告警邮件，不生成空日报"
         logger.error("所有数据源均不可用，不生成空日报", extra={"source": "main"})
         return {
@@ -180,6 +234,7 @@ def run(
         target_day,
         config.report.team_name,
         sources=sources,
+        progress=_progress_of(results),
     )
 
     store = storage or ReportStorage(config.storage_path)
@@ -419,6 +474,20 @@ def _mock_results(config: AppConfig, day: date) -> dict:
         SOURCE_LARK_TASK: CollectResult.ok(tasks),
         SOURCE_LARK_MSG: CollectResult.ok(filtered_messages),
         SOURCE_LARK_ATTENDANCE: CollectResult.ok(attendance),
+        # v1.8：演示数据里也给一条工程进展，让 --mock 能覆盖邮件的第 4 段
+        SOURCE_REPO_PROGRESS: CollectResult.ok(
+            [
+                RepoProgress(
+                    commit_count=2,
+                    version="v1.8",
+                    change_layer="设计变更",
+                    spec_changed=["specs/design.md", "specs/contracts/data-models.md"],
+                    code_changed=True,
+                    same_commit=True,
+                    spec_coverage="97/98 = 99.0%",
+                )
+            ]
+        ),
     }
 
 

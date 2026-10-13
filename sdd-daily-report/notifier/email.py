@@ -23,15 +23,29 @@ from shared.errors import NotifierError
 from shared.logger import get_logger
 from shared.models import DailyReport
 
-from generator.template import report_title
+from generator.template import SUBJECT_PATTERN_DEFAULT, report_title
 
 logger = get_logger("notifier.email")
 
 
-def build_message(report: DailyReport, recipients: list[str], sender: str) -> EmailMessage:
-    """构造 HTML 邮件。主题包含日期和团队名称。"""
+def build_message(
+    report: DailyReport,
+    recipients: list[str],
+    sender: str,
+    *,
+    subject_pattern: str = SUBJECT_PATTERN_DEFAULT,
+    grade: str = "",
+    owner: str = "",
+) -> EmailMessage:
+    """构造 HTML 邮件。主题按配置模板渲染（含日期与报告名，v1.8 起可配）。"""
     message = EmailMessage()
-    message["Subject"] = report_title(report.team_name, report.date)
+    message["Subject"] = report_title(
+        report.team_name,
+        report.date,
+        subject_pattern=subject_pattern,
+        grade=grade,
+        owner=owner,
+    )
     message["From"] = sender
     message["To"] = ", ".join(recipients)
     message.set_content("本邮件为 HTML 格式，请使用支持 HTML 的邮件客户端查看。")
@@ -73,7 +87,14 @@ def send(
         return False
 
     sender = config.sender or config.smtp_user
-    message = build_message(report, recipients, sender)
+    message = build_message(
+        report,
+        recipients,
+        sender,
+        subject_pattern=config.subject_pattern,
+        grade=config.grade,
+        owner=config.owner,
+    )
 
     last_error: Exception | None = None
     for attempt in range(config.max_retries + 1):

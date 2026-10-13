@@ -28,6 +28,13 @@ email:
   smtp_user: "daily-report@example.com"
   use_ssl: true
   sender: "daily-report@example.com"
+  # 邮件主题模板（v1.8 起可配）。占位符：{team_name} 报告名、{date} 日期、
+  # {grade} 年级、{owner} 姓名；未知占位符原样保留（便于发现拼错）。
+  # 例："{grade}+{owner}+{date}+智能日报" → "研一+张三+2026-10-12+智能日报"
+  subject_pattern: "{team_name} {date}"
+  # 年级与姓名属于**个人属性**，只写在这里，不写进模板代码。
+  grade: ""
+  owner: ""
   recipients:
     - "leader@example.com"
 
@@ -35,6 +42,8 @@ email:
 report:
   team_name: "平台研发组"
   timezone: "Asia/Shanghai"
+  # 工程进展板块（v1.8）读取的 Git 仓库路径。留空 = 自动向上找仓库根。
+  repo_path: ""
   sensitive_keywords:
     - "薪资"
     - "绩效"

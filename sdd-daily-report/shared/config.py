@@ -79,6 +79,11 @@ class EmailConfig:
     sender: str = ""
     recipients: list[str] = field(default_factory=list)
     max_retries: int = 2
+    # ---- v1.8：邮件主题模板（主题是邮件层的事，故放这里而不是 report 段）----
+    # 可用占位符 {team_name}/{date}/{grade}/{owner}；默认保持"报告名 + 日期"的原样格式。
+    subject_pattern: str = "{team_name} {date}"
+    grade: str = ""  # 年级，供主题模板使用（个人属性只走配置，不硬编码）
+    owner: str = ""  # 姓名，供主题模板使用
 
 
 @dataclass(frozen=True)
@@ -87,6 +92,8 @@ class ReportConfig:
     timezone: str = "Asia/Shanghai"
     sensitive_keywords: list[str] = field(default_factory=list)
     holidays: list[str] = field(default_factory=list)
+    # v1.8：工程进展板块的仓库路径（空串 = 由项目目录向上自动探测 Git 仓库根）
+    repo_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -197,6 +204,10 @@ def load_config(path: str | Path) -> AppConfig:
         use_ssl=bool(raw_email.get("use_ssl", True)),
         sender=str(raw_email.get("sender", "")),
         recipients=[str(r) for r in raw_email.get("recipients", [])],
+        # v1.8：邮件主题模板（design.md §6.7(2)）。空值回退到默认模板。
+        subject_pattern=str(raw_email.get("subject_pattern", "") or "{team_name} {date}"),
+        grade=str(raw_email.get("grade", "") or ""),
+        owner=str(raw_email.get("owner", "") or ""),
     )
 
     # ---- report ----
@@ -206,6 +217,7 @@ def load_config(path: str | Path) -> AppConfig:
         timezone=str(raw_report.get("timezone", "Asia/Shanghai")),
         sensitive_keywords=[str(k) for k in raw_report.get("sensitive_keywords", [])],
         holidays=[str(d) for d in raw_report.get("holidays", [])],
+        repo_path=str(raw_report.get("repo_path", "") or ""),
     )
 
     return AppConfig(

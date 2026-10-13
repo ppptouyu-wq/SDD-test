@@ -2,7 +2,7 @@ openapi: 3.0.3
 
 info:
   title: 智能日报生成器 — 接口契约（api-spec.yaml）
-  version: 1.5.0
+  version: 1.8.0
   description: |
     本书 SDD 六阶段工作流【阶段三：接口契约】的产物之一（与 data-models.md 配套）。
 
@@ -264,6 +264,42 @@ components:
             "采集失败的数据源必须显式标注"的验收标准。旧记录可能为空对象。
           additionalProperties:
             type: boolean
+        progress:
+          allOf:
+            - $ref: "#/components/schemas/RepoProgress"
+          nullable: true
+          description: |
+            当日工程进展（v1.8 新增）。取不到本机仓库信息时为 null，邮件渲染中性空态
+            "今日未记录工程进展"。**刻意不出现在 sources 里**：它是本机代码仓库的
+            "工程数据源"（proposal.md §4），不是外部协作平台。
+
+    RepoProgress:
+      type: object
+      description: 当日工程进展（v1.8 新增，对应 design.md §3.4 / §6.8）
+      required: [commit_count, version, change_layer, spec_changed, code_changed, same_commit, spec_coverage]
+      properties:
+        commit_count:
+          type: integer
+          minimum: 0
+        version:
+          type: string
+          description: 当日最高迭代版本号，如 v1.8；无则空串
+        change_layer:
+          type: string
+          enum: [需求变更, 设计变更, 任务变更, 缺陷修复, 未识别]
+          description: 按"受影响的最上游规范层"判定（design.md §3.4）
+        spec_changed:
+          type: array
+          items: { type: string }
+          description: 当日被改动的规范文件（仓库根相对路径）
+        code_changed:
+          type: boolean
+        same_commit:
+          type: boolean
+          description: 是否至少有一个提交同时改了规范与代码（书图 7-8 的闭环要求）
+        spec_coverage:
+          type: string
+          description: 规范覆盖率文本，如 "97/98 = 99.0%"；取不到则空串
 
     # ---------- 展示层视图模型（v1.2 新增）----------
     SourceView:

@@ -69,10 +69,25 @@
 | markdown | str | 完整的 Markdown 格式日报 |
 | html | str | 完整的 HTML 格式日报 |
 | sources | dict[str, bool] | 各数据源当日采集成功/失败（v1.2 新增），键为数据源名（`github`/`lark_task`/`lark_msg`/`lark_attendance`），值为是否成功。展示层据此推导 status；**v1.2 之前的历史记录可能为空字典** |
+| progress | RepoProgress \| None | 当日工程进展（v1.8 新增）；取不到仓库信息时为 None。**刻意不写入 sources**：它是本机代码仓库的"工程数据源"（`proposal.md` §4），失败原因多为"这台机器上不是 Git 仓库"，属可解释的缺失，算进四态会把整份日报误打成 `partial` |
 
 > `sources` 是"采集失败必须显式标注"（`proposal.md` §3.1）在数据模型上的落点：
 > 只有把每个数据源的成败随日报一起持久化，展示层才能对失败数据源标注"数据获取失败"，
 > 并把它与"当日确实没有数据"区分开。该字段同时在 `api-spec.yaml` 的 `DailyReport` 中声明，两处不得矛盾。
+
+### RepoProgress（工程进展）— v1.8 新增
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| commit_count | int | 是 | 当日提交数（本地 Git 历史） |
+| version | str | 是 | 当日最高迭代版本号，如 `v1.8`；无则空串 |
+| change_layer | str | 是 | **枚举：需求变更 / 设计变更 / 任务变更 / 缺陷修复 / 未识别**（判定表见 design.md §3.4） |
+| spec_changed | list[str] | 是 | 当日被改动的规范文件（仓库根相对路径），可为空列表 |
+| code_changed | bool | 是 | 当日是否改动了代码或测试 |
+| same_commit | bool | 是 | 是否至少有一个提交同时改了规范与代码（书图 7-8 的闭环要求） |
+| spec_coverage | str | 是 | 规范覆盖率文本，如 `97/98 = 99.0%`；取不到则空串 |
+
+> 取数原则见 `design.md` §6.8：板块里只允许出现 `git` 与 `metrics` 能直接算出来的数字，
+> 不得出现"测试全部通过"这类需要现场执行才能确认的断言。
 
 ## 3. 展示层视图模型（v1.2 迭代新增）
 

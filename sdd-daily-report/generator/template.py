@@ -15,7 +15,7 @@ from datetime import date, datetime
 
 from jinja2 import Template
 
-from shared.models import CommitRecord, DailyReport, MemberReport
+from shared.models import CommitRecord, DailyReport, MemberReport, RepoProgress
 
 NO_RECORD = "今日无记录"
 FETCH_FAILED = "数据获取失败"
@@ -94,14 +94,40 @@ def summarize_commit(
     return subject, summary
 
 
-def report_title(team_name: str, day: date) -> str:
-    """邮件主题 = 报告名 + 日期（tasks.md Task 7 验收标准）。
+SUBJECT_PATTERN_DEFAULT = "{team_name} {date}"
+
+
+def report_title(
+    team_name: str,
+    day: date,
+    *,
+    subject_pattern: str = SUBJECT_PATTERN_DEFAULT,
+    grade: str = "",
+    owner: str = "",
+) -> str:
+    """邮件主题 = 按配置模板渲染（tasks.md Task 7 验收标准；design.md §6.7(2)）。
 
     v1.7 起不再在报告名后面拼"工作日报"后缀：报告名由部署配置（`team_name`）
-    直接给出，本来就是完整名称（例如「孔子博智能日报」），再拼后缀会变成
-    「孔子博智能日报工作日报」。日期保留 —— 一天一封，收件箱里要能分辨是哪天。
+    直接给出，本来就是完整名称（例如「平台研发组智能日报」），再拼后缀会变成
+    「平台研发组智能日报工作日报」。日期保留 —— 一天一封，收件箱里要能分辨是哪天。
+
+    v1.8 起模板可配（`email.subject_pattern`），支持 `{team_name}`/`{date}`/
+    `{grade}`/`{owner}` 四个占位符，用于「{grade}+{owner}+{date}+智能日报」这类要求。
+    年级与姓名是**个人属性**，只从配置取值，不写进模板代码。
+    **未知占位符原样保留**：宁可让收件人看到 `{foo}` 这种明显异常，
+    也不要静默吞掉一个拼错的占位符。
     """
-    return f"{team_name} {day.isoformat()}"
+    pattern = (subject_pattern or "").strip() or SUBJECT_PATTERN_DEFAULT
+    values = {
+        "team_name": team_name,
+        "date": day.isoformat(),
+        "grade": grade,
+        "owner": owner,
+    }
+    rendered = pattern
+    for key, value in values.items():
+        rendered = rendered.replace("{" + key + "}", value)
+    return rendered.strip()
 
 
 def render_markdown(
@@ -506,13 +532,70 @@ def _email_plain_list(items: list[str]) -> str:
     return rows
 
 
+# v1.8：变更起点层的呈现映射（design.md §3.4 判定表 → 一句人话）
+CHANGE_LAYER_ORIGIN = {
+    "需求变更": "起点在 proposal.md",
+    "设计变更": "起点在 design.md",
+    "任务变更": "起点在 tasks.md",
+    "缺陷修复": "起点在代码",
+    "未识别": "变更起点未识别",
+}
+
+SECTION_PROGRESS = "今日工程进展"
+PROGRESS_EMPTY = "今日未记录工程进展"
+
+
+def _progress_callout(progress: RepoProgress) -> str:
+    """把当日工程进展渲染成信息块（v1.8，design.md §6.8）。
+
+    **只放能复现的事实**：数字要么来自本地 `git`，要么来自规范覆盖率的静态统计。
+    这里刻意不出现"测试全部通过""代码质量优秀"这类需要现场执行才能确认的断言。
+    """
+    head = f"当日 <strong>{progress.commit_count}</strong> 次提交"
+    if progress.version:
+        head += f" · 迭代到 <strong>{_escape(progress.version)}</strong>"
+
+    details: list[str] = []
+    origin = CHANGE_LAYER_ORIGIN.get(progress.change_layer)
+    if origin and progress.change_layer != "未识别":
+        details.append(f"变更起点：{_escape(progress.change_layer)}（{origin}）")
+    if progress.spec_changed:
+        details.append("规范链：" + _escape("、".join(progress.spec_changed)))
+
+    # 闭环判定：文案要贴合事实，不能拿"只改代码"去说"规范与代码分离"
+    if progress.spec_changed and progress.code_changed:
+        details.append(
+            "闭环：规范与代码在同一个提交 ✓"
+            if progress.same_commit
+            else "闭环：规范与代码分在两个提交"
+        )
+    elif progress.spec_changed:
+        details.append("本次只改规范，未改代码")
+    elif progress.code_changed:
+        details.append("本次只改代码与测试（未触及规范）")
+
+    if progress.spec_coverage:
+        details.append("规范覆盖率：" + _escape(progress.spec_coverage))
+
+    # head 里的数字与版本号都已在本函数内转义，其余是常量标记
+    inner = head
+    if details:
+        muted = "<br>".join(
+            f'<span style="color:{EMAIL_FG_2};">{item}</span>' for item in details
+        )
+        inner += f'<div style="margin-top:6px;">{muted}</div>'
+    return _email_callout(inner)
+
+
 def render_email_html(report: DailyReport) -> str:
-    """渲染邮件日报的 HTML（design.md §6.7，v1.6）。
+    """渲染邮件日报的 HTML（design.md §6.7，v1.6；v1.8 增至五段）。
 
     与 `markdown_to_html()` 的区别：这里**直接按结构渲染**。原因是新版式要做汇总 ——
     "概览计数""今日总结句""每个成员在哪些仓库提交了多少次、累计多少行"都要在
     `DailyReport` 上现算，从已经拍平的 Markdown 反推既脆弱又不诚实。
     Markdown 仍然是落库的原件（`report.markdown`），HTML 只是它的另一种呈现。
+
+    五段：标题区 → 今日概览 → 今日总结 → 今日工程进展（v1.8，团队级）→ 按成员分组。
     """
     sources = report.sources or {}
     attendance_failed = bool(sources) and sources.get(ATTENDANCE_SOURCE) is False
@@ -569,7 +652,19 @@ def render_email_html(report: DailyReport) -> str:
         )
     )
 
-    # ---- 4. 按成员分组 ----
+    # ---- 4. 今日工程进展（v1.8，团队级；见 design.md §6.8）----
+    blocks.append(_email_section_title("🔧", SECTION_PROGRESS))
+    if report.progress is not None:
+        blocks.append(_progress_callout(report.progress))
+    else:
+        # 本机取不到仓库信息不是故障：中性空态，不写成"采集失败"、不进 sources
+        blocks.append(
+            _email_callout(
+                PROGRESS_EMPTY, background=EMAIL_NEUTRAL_SOFT, accent=EMAIL_BORDER
+            )
+        )
+
+    # ---- 5. 按成员分组 ----
     for member in report.members:
         blocks.append(_email_member_bar(member.name))
 

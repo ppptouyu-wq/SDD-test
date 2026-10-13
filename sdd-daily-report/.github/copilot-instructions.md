@@ -33,7 +33,7 @@ sdd-daily-report/
 │   ├── tasks.md
 │   ├── contracts/
 │   └── adrs/         # ADR 只追加、不修改
-├── collector/        # 采集层：github / lark_task / lark_msg / lark_attendance
+├── collector/        # 采集层：github / lark_task / lark_msg / lark_attendance / repo_progress（v1.8，本地 Git）
 ├── generator/        # 生成层：formatter / template
 ├── notifier/         # 推送层：email / lark_bot
 ├── shared/           # 共享层：config / logger / errors / storage / retry / calendar / models

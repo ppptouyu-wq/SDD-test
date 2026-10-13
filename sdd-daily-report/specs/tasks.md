@@ -2,10 +2,10 @@
 
 ## 元信息
 - 关联规范: specs/proposal.md、specs/design.md
-- 任务总数: 12
+- 任务总数: 13
 - 预计总执行时间: 4到5h（包含测试）
 - 执行策略: 按依赖关系顺序执行，独立任务可并行执行
-- 迭代记录: v1.1 新增 Task 11 并修改 Task 6/Task 10；v1.2 新增 Task 12；v1.3 补齐 Task 11 的成员名单接线（修改 Task 6/Task 9/Task 11）；v1.4 取消默认的非工作日跳过，改为显式 `--working-days-only`（修改 Task 9）；v1.5 收紧提交信息在日报里的呈现（修改 Task 6）；v1.5.1 修复提交条目在 HTML 里拍平、看串的呈现缺陷（修改 Task 6）；v1.6 邮件日报改为卡片式可视化版式（修改 Task 6/Task 7）；v1.7 邮件版式换色与结构微调（起点在 design.md §6.7，未改任务的验收标准）
+- 迭代记录: v1.1 新增 Task 11 并修改 Task 6/Task 10；v1.2 新增 Task 12；v1.3 补齐 Task 11 的成员名单接线（修改 Task 6/Task 9/Task 11）；v1.4 取消默认的非工作日跳过，改为显式 `--working-days-only`（修改 Task 9）；v1.5 收紧提交信息在日报里的呈现（修改 Task 6）；v1.5.1 修复提交条目在 HTML 里拍平、看串的呈现缺陷（修改 Task 6）；v1.6 邮件日报改为卡片式可视化版式（修改 Task 6/Task 7）；v1.7 邮件版式换色与结构微调（起点在 design.md §6.7，未改任务的验收标准）；v1.8 新增 Task 13（工程进展采集与邮件板块），并把邮件主题改为可配置模板（修改 Task 7）
 
 ---
 
@@ -160,6 +160,9 @@
 - [ ] 邮件 HTML 的卡片与配色用 `<table>` + 内联样式表达；CSS 中不出现 `url(`（不引用外部图片/字体），邮件不依赖 JavaScript（v1.6 变更）
 - [ ] 成员某板块当日为空时渲染「今日无记录」，采集失败的来源在顶部以告警块列出（v1.6 变更）
 - [ ] 版式相关的单元测试通过，覆盖"有数据"与"四个板块全空"两种情形（v1.6 变更）
+- [ ] 邮件主题由 `report_title()` 按 `report.subject_pattern` 模板渲染，默认 `{team_name} {date}`；占位符 `{team_name}`/`{date}`/`{grade}`/`{owner}` 均可用，未知占位符原样保留不报错（v1.8 变更，design.md §6.7(2)）
+- [ ] `email.subject_pattern` / `email.grade` / `email.owner` 里的年级、姓名等个人属性只从配置取值，不出现在模板代码里（v1.8 变更）
+- [ ] 邮件版式为**五段**：标题区、今日概览、今日总结、今日工程进展、按成员分组（v1.8 变更，design.md §6.7(2)）
 
 ---
 
@@ -301,6 +304,44 @@
 
 ---
 
+## Task 13: 实现工程进展采集与邮件板块（新增 v1.8）
+
+描述: 从**日报所在代码仓库本身**的本地 Git 历史里取数，产出团队级的"今日工程进展"
+（当日提交数、迭代版本号、变更起点层级、规范链变更文件、闭环判定、规范覆盖率），
+在邮件日报的"今日总结"之后新增该板块；取不到仓库信息时渲染中性空态，不影响其他板块与四态判定
+
+输入:
+  design.md §3.4（RepoProgress 数据模型、变更起点判定表、"不是数据源"的口径）
+  design.md §6.8（取数规则：只允许 `git` 与 `metrics` 能复现的数字；空态；只走邮件渠道）
+  design.md §6.7(2)（五段版式第 4 段、可配置的邮件主题模板）
+  contracts/data-models.md §2（RepoProgress 字段级契约）
+  proposal.md §3.1 的 v1.8 四条、§4「工程数据源」
+输出:
+  collector/repo_progress.py（**只用标准库 `subprocess` 调本机 git**，零新增依赖）
+  shared/models.py 的 RepoProgress 与 DailyReport.progress
+  shared/config.py 的 report.repo_path（工程进展）与 email.subject_pattern / grade / owner（邮件主题模板）
+  generator/formatter.py（把 progress 挂到日报上）
+  generator/template.py（邮件第 4 段 + 主题模板渲染）
+  main.py（采集接线 + 覆盖率取数注入）
+  tests/test_repo_progress.py、tests/test_generator.py（板块与主题）
+依赖: Task 2（存储层）、Task 6（日报生成）、Task 7（邮件推送）
+
+验收标准:
+- [ ] `git rev-parse --show-toplevel` 自动定位仓库根；`report.repo_path` 非空时可显式覆盖（design.md §6.8(2)）
+- [ ] 当日提交数与涉及的文件清单来自本地 `git log --since --until --name-only`，不调用 GitHub API（§6.8(2)）
+- [ ] 变更起点层级按 design.md §3.4 的判定表给出；多层同时改动时取**最上游**那一层（proposal.md §3.1 v1.8）
+- [ ] `RepoProgress.version`（迭代版本号）取当日提交标题里最高的 `vX.Y[.Z]`；当日没有带版本号的提交时为空串（§3.4）
+- [ ] `same_commit` 仅在存在"同一提交同时改动 `specs/` 与代码/测试"时才为 true（书图 7-8 闭环）
+- [ ] 规范覆盖率通过**注入的 callable** 取（未注入 → 空串）；采集层不 `import sdd_agents`（§6.8(2)）
+- [ ] 板块只渲染可复现的事实：不得出现"测试全部通过""代码质量优秀"这类断言（§6.8(3)、proposal.md §3.1 v1.8）
+- [ ] 取不到仓库信息（非 Git 仓库 / 本机无 git）时 `success=False`、`progress=None`，邮件渲染"今日未记录工程进展"并写 WARNING 日志（§6.8(4)）
+- [ ] `progress` 不出现在 `sources` 中，日报的四态判定不受其影响（design.md §3.4）
+- [ ] 邮件主题按 `email.subject_pattern` 渲染，默认 `{team_name} {date}`，`{grade}`/`{owner}` 由配置提供（§6.7(2)）
+- [ ] 展示页保持 v1.2 的"总览 + 成员四段"不变（§6.8(1)）
+- [ ] 基于临时 Git 仓库的单元测试全部通过（`git init` + 构造提交，不依赖本仓库的真实历史）
+
+---
+
 ## 执行顺序与依赖关系
 
 ```
@@ -310,6 +351,7 @@ Task 1 ──▶ Task 2 ──┬──▶ Task 3  ┐
                     ├──▶ Task 6 ──┬──▶ Task 7 ┘
                     │             └──▶ Task 8
                     │             └──▶ Task 12（v1.2 新增，只读旁路）
+                    │             └──▶ Task 13（v1.8 新增，工程数据源）──▶ Task 7（v1.8 变更）
                     └──▶ Task 11（v1.1 新增）──▶ Task 6（v1.1 变更）
 ```
 
@@ -320,6 +362,9 @@ Task 1 ──▶ Task 2 ──┬──▶ Task 3  ┐
 - v1.2 增量路径：Task 2 → Task 6 → Task 12（展示层读库渲染）
   —— 展示层不接入采集链路，只读 `data/reports.db`，因此**不在关键路径上**；
   它也可以与 Task 7/Task 8 并行执行。
+- v1.8 增量路径：Task 2 → Task 13 → Task 7（工程进展进入邮件版式）
+  —— Task 13 是本机旁路采集，不依赖 GitHub/飞书可用性，因此**不在关键路径上**，
+  但它是 v1.8 邮件第 4 段的唯一数据来源，故 Task 7 的版式变更必须排在它之后。
 
 ## 任务粒度自评（对应 §6.2）
 
@@ -330,5 +375,6 @@ Task 1 ──▶ Task 2 ──┬──▶ Task 3  ┐
 | Task 6 | ~180 行 | 是（Mock 数据） | 合适 |
 | Task 9 | ~100 行 | 是（集成测试） | 合适 |
 | Task 12 | ~200 行（含静态页面） | 是（临时 SQLite 库 + 视图模型断言） | 合适（略偏上沿，故逻辑与 HTTP 壳分离） |
+| Task 13 | ~150 行 | 是（临时 Git 仓库 + 注入覆盖率取数） | 合适 |
 
 均落在"50~200 行 / 产出可测试交付物"的最佳区间内。

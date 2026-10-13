@@ -210,7 +210,7 @@ def test_governance_report_passed_only_without_errors():
 
 def test_measure_spec_counts_acceptance_items():
     spec = metrics_mod.measure_spec(ROOT / "specs" / "proposal.md")
-    assert spec.acceptance_items == 34  # 功能 19(含 v1.1 两条 + v1.2 三条 + v1.5 两条 + v1.6 三条) + 性能 5 + 边界 8(含 v1.4 拆出的两条)
+    assert spec.acceptance_items == 39  # 功能 24(含 v1.1 两条 + v1.2 三条 + v1.5 两条 + v1.6 三条 + v1.8 五条) + 性能 5 + 边界 8(含 v1.4 拆出的两条)
     assert spec.out_of_scope_items == 6
     assert spec.lines > 0
 

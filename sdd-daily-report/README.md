@@ -61,7 +61,7 @@
    | ② 真实 GitHub 仓库（2026-04-24，不推送） | 拉真实提交 |
    | ③ 健康检查（--check） | 逐项检查配置 |
    | ④ 今天（真实推送，慎用） | 会真的发邮件/推飞书 |
-   | ⑤ 跑全部测试（pytest） | 366 个用例 |
+   | ⑤ 跑全部测试（pytest） | 399 个用例 |
    | ⑥ 只跑当前打开的测试文件 | 调试单个用例 |
    | ⑦ 展示页：本地只读查看已生成的日报 | 起本地网页看日报（v1.2 新增） |
 
@@ -248,6 +248,7 @@ GitHub API ─┐
 | 10 | 集成测试 | ✅ |
 | 11 | 考勤采集模块（v1.1 新增） | ✅ |
 | 12 | 本地只读展示层（v1.2 新增） | ✅ |
+| 13 | 工程进展采集与邮件板块（v1.8 新增） | ✅ |
 
 ## v1.1 迭代（书中第 7 章 7.5）
 
@@ -333,7 +334,8 @@ v1.2 的前端是用 **OpenDesign** 迭代出来的，过程留了档：
 | `tests/test_lark_task.py` | 7 | 飞书任务采集 |
 | `tests/test_lark_msg.py` | 13 | 飞书群消息采集（关键词过滤 + 敏感词剔除） |
 | `tests/test_attendance.py` | 12 | 飞书考勤采集（v1.1 新增） |
-| `tests/test_generator.py` | 34 | 日报生成（含 v1.1 考勤逻辑、v1.3 双 ID 身份映射与「今日无记录」渲染、v1.5 提交摘要截断与条目分组、v1.6 邮件卡片版式与计数/总结句、v1.7 配色白名单与成员名条） |
+| `tests/test_generator.py` | 41 | 日报生成（含 v1.1 考勤逻辑、v1.3 双 ID 身份映射与「今日无记录」渲染、v1.5 提交摘要截断与条目分组、v1.6 邮件卡片版式与计数/总结句、v1.7 配色白名单与成员名条、v1.8 工程进展段与可配主题） |
+| `tests/test_repo_progress.py` | 26 | 工程进展采集（v1.8 新增，自造临时 Git 仓库）：仓库定位、当日计数、版本号取最高、变更起点判定、闭环判定、规范覆盖率注入与降级 |
 | `tests/test_email.py` | 7 | SMTP 推送 |
 | `tests/test_lark_bot.py` | 8 | 飞书机器人推送 |
 | `tests/test_main.py` | 21 | `main.py` 入口：编排、`load_dotenv`、`load_tasks_file`、CLI 退出码、路径锚定、v1.3 考勤名单接线、v1.4 仅工作日开关默认关闭 |
@@ -374,7 +376,7 @@ python -m pytest tests/ -v
    `_attendance_user_ids()`（从 `members[].lark_employee_id` 去重取名单）；
    `formatter.aggregate()` 增加 `by_lark_employee` 映射（空 ID 不入表）；
    `template.render_markdown()` 的考勤分支由两段变三段。
-6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.7 后为 366），规范与代码一起提交（书图 7-8 的闭环要求）。
+6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.8 后为 399），规范与代码一起提交（书图 7-8 的闭环要求）。
 
 真实跑通的证据（2026-10-09 那次）：日志从
 `飞书考勤采集失败 error: ... employeeNos is empty` 变成
@@ -504,6 +506,42 @@ v1.6 的邮件版式是照需求参考稿（一张手机邮件截图）做出来
 - **配色收进白名单**。`EMAIL_PALETTE` 与单测 `test_email_html_only_uses_the_design_palette`
   把「邮件里出现的颜色必须落在 §6.7 色板内」变成可执行约束，避免以后随手加一个色板外的
   颜色，版式慢慢跑偏成"谁都能改一点"的样子。
+
+## v1.8 迭代：邮件加「今日工程进展」板块 + 可配邮件主题（起点在 design，配合 proposal）
+
+触发点是一条真实反馈：「日报格式和内容做的太差，迭代速度也太慢，对 vibe coding 的理解也不好」。
+排查出两件事：① 「任务进展」那一格**永远 0** —— 飞书任务接口的口径被实测证伪（`GET /task/v2/tasks`
+只认 `user_access_token`、只返回"我负责的"任务，`project_id` / `updated_since` 从来没生效，
+见 `docs/飞书接入诊断报告.md` 的修正结论）；② 项目**自己**一天之内从 v1.2 迭代到 v1.8，
+邮件里却一个字都没体现。于是把那一格换掉：不再假装能从飞书任务取到数，改为从**本地 Git 历史**
+取"同一条命令就能复现的事实"。
+
+| 层级 | 改了什么 |
+|---|---|
+| `proposal.md` §3.1 | 新增 5 条验收标准：板块存在；数字必须来自可复现事实、**不得现场执行测试或估算**；变更起点按最上游规范层判定；取不到仓库信息时渲染「今日未记录工程进展」且不影响其他板块与 `sources`；邮件主题可按配置模板渲染 |
+| `design.md` §3.4 | 新增 `RepoProgress` 数据模型（7 字段）与**变更起点判定表**（改了 `specs/proposal.md` → 需求变更；只有 `design.md`/`contracts/**` → 设计变更；只有 `tasks.md` → 任务变更；只改代码与测试 → 缺陷修复；多层都改取**最上游**），并写明它**不是数据源**、不参与 `sources` 四态 |
+| `design.md` §4 | 新增 `repo_progress.collect(repo_path, since, until, *, coverage=None) -> CollectResult[RepoProgress]`；`generator.generate()` 补 `sources` 与 `progress` 两个入参 |
+| `design.md` §6.7(2) / §6.8 | 邮件版式四段 → **五段**（标题区 / 今日概览 / 今日总结 / 今日工程进展 / 按成员分组）；主题改由 `email.subject_pattern` 模板渲染（占位符 `{team_name}`/`{date}`/`{grade}`/`{owner}`）；§6.8 写死取数规则、诚实性约束与空态 |
+| `contracts/` | `data-models.md` 补 `DailyReport.progress` 与 `RepoProgress` 字段表；`api-spec.yaml` 版本 1.5.0 → 1.8.0、新增 `RepoProgress` schema |
+| `tasks.md` | 新增 **Task 13**（12 条验收标准）、Task 7 补 3 条主题模板验收标准、任务总数 12 → 13 |
+| `collector/repo_progress.py`（新） | 标准库 `subprocess` 调 git：`git rev-parse --show-toplevel` 定位仓库根、`git log --name-only` 取当日文件清单（`-c core.quotepath=false`，否则中文路径被转义）；**不引入新依赖** |
+| `generator/template.py` | 新增 `_progress_callout()` 与第 4 段；`report_title()` 支持 `subject_pattern`/`grade`/`owner`，未知占位符原样保留 |
+| `main.py` | 新增 `SOURCE_REPO_PROGRESS`；覆盖率用延迟 import 的 callable 注入（采集层不依赖治理层）；`sources` 与「全部数据源不可用」判定都**排除**这个板块 |
+| 测试 | 新增 `tests/test_repo_progress.py`（26 条，自造临时 Git 仓库，不依赖本仓库历史）与 `test_generator.py` 的 6 条版式/主题测试 |
+
+三个设计决定与理由：
+
+- **`RepoProgress` 刻意不进 `sources` 四态**。它不是"外部协作平台"：取不到多半意味着"本机不是
+  Git 仓库"，属于可解释的缺失。硬挤进 `sources` 会把整份日报打成 `partial`，还要连带改
+  `data-models` 的键枚举、术语定义与展示页。现在 `progress=None` → 中性块「今日未记录工程进展」
+  + 一条 WARNING，其他板块与状态完全不受影响。
+- **里程碑数字只允许是"同一条命令能复现的事实"**。当日提交数、版本号、变更起点、规范链改动、
+  闭环判定全部来自 git；规范覆盖率来自 `sdd_agents.metrics` 的静态统计。**绝不现场跑 pytest** ——
+  日报要秒级生成，更不能把"测试全部通过"这类无法验证的结论写进给老师看的邮件。
+- **这个板块只在邮件渠道出现**。展示页按 v1.2 的约定保持"总览 + 成员四段"不变；`RepoProgress`
+  随 payload 一起落库，将来展示页要用，不必重新采集。
+
+一键复现：`python main.py --date 2026-10-12 --no-push`（第 4 段会写当天真实的提交数与迭代版本）。
 
 ## 工程化配套（第 3、8、9 章）
 

@@ -41,13 +41,22 @@ def test_mock_mode_runs_full_pipeline_without_credentials(config):
 
     results = app._mock_results(config, DAY)
 
-    assert set(results) == {"GitHub", "飞书任务", "飞书消息", "飞书考勤"}
+    assert set(results) == {
+        "GitHub",
+        "飞书任务",
+        "飞书消息",
+        "飞书考勤",
+        app.SOURCE_REPO_PROGRESS,  # v1.8：本机工程进展（不进 sources）
+    }
     assert all(isinstance(r, CollectResult) and r.success for r in results.values())
     assert len(results["GitHub"].records) == 2
     # 演示数据里的"绩效"消息必须已被敏感词过滤掉
     assert all(
         "绩效" not in m.content for m in results["飞书消息"].records
     )
+    # v1.8：演示模式也要能覆盖邮件的「今日工程进展」段
+    progress = results[app.SOURCE_REPO_PROGRESS].records
+    assert len(progress) == 1 and progress[0].commit_count == 2
 
 
 def test_run_with_mock_flag_end_to_end(config):

@@ -36,7 +36,7 @@ sdd-daily-report/
 │   ├── tasks.md
 │   ├── contracts/
 │   └── adrs/         # ADR 只追加、不修改
-├── collector/        # 采集层：github / lark_task / lark_msg / lark_attendance
+├── collector/        # 采集层：github / lark_task / lark_msg / lark_attendance / repo_progress（v1.8，本地 Git）
 ├── generator/        # 生成层：formatter / template
 ├── notifier/         # 推送层：email / lark_bot
 ├── shared/           # 共享层：config / logger / errors / storage / retry / calendar / models
@@ -47,10 +47,10 @@ sdd-daily-report/
 
 ## 当前状态
 
-- 版本：v1.7（v1.7 把邮件版式换成青碧身份色并微调结构：标题区吸收原「信息块」、报告名不再拼「工作日报」后缀、成员分组改为整宽名条，颜色收进 `template.EMAIL_PALETTE` 白名单，见 `design.md` §6.7；v1.6 把邮件日报从 Markdown 转换换成卡片式可视化版式：新增 `template.render_email_html(report)`，`generator/formatter.py` 改调它生成 `report.html`，见 `design.md` §6.7；版式只在邮件侧，不引用 `webview/` 的 `ant` 令牌，红色 `--accent` 不用于邮件；v1.5.1 修掉提交条目在邮件 HTML 里被拍平、看串的呈现缺陷，见 `design.md` §3.3 第 7/8 条；v1.5 在 v1.4 基础上把日报里的提交信息收成「标题 + 正文前 3 句摘要」，见 `design.md` §3.3；v1.4 时取消默认的非工作日跳过：`main.run(working_days_only=False)`
+- 版本：v1.8（v1.8 给邮件加「今日工程进展」板块并让主题可配：新增 `collector/repo_progress.py` 只读本地 Git 历史（当日提交数、迭代版本号、变更起点层级、规范链改动、闭环判定），规范覆盖率由 `main.py` 注入 callable（采集层不依赖治理层），邮件版式由四段合成五段，主题改由 `email.subject_pattern` 模板渲染（占位符 `{team_name}`/`{date}`/`{grade}`/`{owner}`，个人属性只写配置不写模板），见 `design.md` §3.4/§6.7(2)/§6.8；v1.7 把邮件版式换成青碧身份色并微调结构：标题区吸收原「信息块」、报告名不再拼「工作日报」后缀、成员分组改为整宽名条，颜色收进 `template.EMAIL_PALETTE` 白名单，见 `design.md` §6.7；v1.6 把邮件日报从 Markdown 转换换成卡片式可视化版式：新增 `template.render_email_html(report)`，`generator/formatter.py` 改调它生成 `report.html`，见 `design.md` §6.7；版式只在邮件侧，不引用 `webview/` 的 `ant` 令牌，红色 `--accent` 不用于邮件；v1.5.1 修掉提交条目在邮件 HTML 里被拍平、看串的呈现缺陷，见 `design.md` §3.3 第 7/8 条；v1.5 在 v1.4 基础上把日报里的提交信息收成「标题 + 正文前 3 句摘要」，见 `design.md` §3.3；v1.4 时取消默认的非工作日跳过：`main.run(working_days_only=False)`
   默认每天都能跑，周末/节假日照常采集→生成→推送；旧行为保留为显式 `--working-days-only`，
   起点在 `specs/proposal.md` §3.3，见 `specs/design.md` §6.6）
-- 任务进度：Task 1 ~ Task 12 全部完成
+- 任务进度：Task 1 ~ Task 13 全部完成
 - 测试：`python -m pytest` 全绿
 - 本地演练：`python main.py --config config.yaml --date 2026-08-20 --mock`
 - 健康检查：`python main.py --config config.yaml --check`

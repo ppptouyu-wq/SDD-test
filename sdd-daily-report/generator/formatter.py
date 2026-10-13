@@ -33,6 +33,7 @@ from shared.models import (
     DailyReport,
     MemberReport,
     MessageRecord,
+    RepoProgress,
     TaskRecord,
 )
 
@@ -107,6 +108,7 @@ def generate(
     team_name: str,
     *,
     sources: dict[str, bool] | None = None,
+    progress: RepoProgress | None = None,
     generated_at: datetime | None = None,
     now: Callable[[], datetime] | None = None,
 ) -> DailyReport:
@@ -114,6 +116,7 @@ def generate(
 
     :param sources: 各数据源采集是否成功（用于标注"数据获取失败"，
         以及考勤采集失败时的"考勤数据暂不可用"）。
+    :param progress: 当日工程进展（v1.8，见 design.md §3.4）；None = 未记录。
     :raises GeneratorError: 渲染失败。
     """
     if not members:
@@ -153,6 +156,9 @@ def generate(
         # v1.2：把各数据源的成败**持久化**进日报。只用于渲染是不够的 ——
         # 展示层要据此区分"采集失败"与"当时没记录来源"（design.md §3.2 的四态）。
         sources=dict(sources or {}),
+        # v1.8：当日工程进展（团队级）。None 表示本机取不到仓库信息 ——
+        # 邮件渲染中性空态，且**不进 sources**（design.md §3.4）。
+        progress=progress,
     )
     try:
         report.html = template.render_email_html(report)

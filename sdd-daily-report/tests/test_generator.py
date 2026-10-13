@@ -19,6 +19,7 @@ from __future__ import annotations
 import copy
 import re
 from datetime import date, datetime
+from pathlib import Path
 
 import pytest
 
@@ -32,6 +33,7 @@ from shared.models import (
     DailyReport,
     MemberReport,
     MessageRecord,
+    RepoProgress,
     TaskRecord,
 )
 
@@ -515,9 +517,11 @@ def test_html_keeps_each_commit_visually_separated():
 # ---------------------------------------------------------------------------
 
 
-def test_email_html_has_the_four_presentation_blocks():
-    """标题区 / 今日概览 / 今日总结 / 按成员分组，四段都要在。"""
-    report = formatter.generate([_member_with_data()], DAY, "平台研发组")
+def test_email_html_has_the_five_presentation_blocks():
+    """标题区 / 今日概览 / 今日总结 / 今日工程进展（v1.8）/ 按成员分组，五段都要在。"""
+    report = formatter.generate(
+        [_member_with_data()], DAY, "平台研发组", progress=_progress()
+    )
     html = report.html
 
     # v1.7：标题区把原「标题 + 信息块」合并成一行（报告名 + 日期同行，生成时间靠右）
@@ -526,6 +530,10 @@ def test_email_html_has_the_four_presentation_blocks():
     assert "生成于 " in html
     assert "📊 今日概览" in html
     assert "📌 <strong>今日总结：</strong>" in html
+    # v1.8：工程进展段夹在「今日总结」与成员分组之间
+    assert template.SECTION_PROGRESS in html
+    assert html.index("📌 <strong>今日总结：</strong>") < html.index(template.SECTION_PROGRESS)
+    assert html.index(template.SECTION_PROGRESS) < html.index("👤 张三")
     assert "👤 张三" in html
     assert "主要变更：" in html
 
@@ -631,4 +639,112 @@ def test_email_html_uses_the_teal_identity_and_member_bar():
     assert f"border-top:3px solid {template.EMAIL_BRAND}" in html
     assert f"background:{template.EMAIL_BRAND_DEEP}" in html        # 顶部通栏
     assert f'color:{template.EMAIL_BRAND_DEEP};">👤 张三' in html   # 成员名条
+
+
+# ---------------------------------------------------------------------------
+# v1.8：今日工程进展板块 + 邮件主题模板（design.md §3.4 / §6.7(2) / §6.8）
+# ---------------------------------------------------------------------------
+
+
+def _progress(**overrides) -> RepoProgress:
+    values = {
+        "commit_count": 3,
+        "version": "v1.8",
+        "change_layer": "设计变更",
+        "spec_changed": ["specs/design.md", "specs/contracts/data-models.md"],
+        "code_changed": True,
+        "same_commit": True,
+        "spec_coverage": "97/98 = 99.0%",
+    }
+    values.update(overrides)
+    return RepoProgress(**values)
+
+
+def _plain(html: str) -> str:
+    """去掉标签只看文字 —— 断言盯"说了什么"，不盯"用哪个标签强调"。"""
+    return re.sub(r"<[^>]+>", "", html)
+
+
+def test_email_html_renders_the_engineering_progress_block():
+    """第 4 段把当日可复现的事实逐条写出来（proposal.md §3.1 v1.8）。"""
+    report = formatter.generate([_member_with_data()], DAY, "平台研发组", progress=_progress())
+    html = report.html
+    text = _plain(html)
+
+    assert template.SECTION_PROGRESS in html
+    assert "当日 3 次提交" in text
+    assert "迭代到 v1.8" in text
+    assert "设计变更" in text
+    assert "起点在 design.md" in text          # 变更起点说人话
+    assert "specs/design.md" in text           # 规范链改动清单
+    assert "97/98 = 99.0%" in text             # 规范覆盖率
+
+
+def test_email_progress_block_is_honest_about_a_missing_closed_loop():
+    """闭环文案要贴合事实：分两次提交不许写成"同一个提交"。"""
+    split = formatter.generate(
+        [_member_with_data()], DAY, "平台研发组",
+        progress=_progress(same_commit=False),
+    ).html
+    code_only = formatter.generate(
+        [_member_with_data()], DAY, "平台研发组",
+        progress=_progress(change_layer="缺陷修复", spec_changed=[], code_changed=True),
+    ).html
+
+    assert "闭环：规范与代码分在两个提交" in split
+    assert "本次只改代码与测试（未触及规范）" in code_only
+    assert "闭环：规范与代码在同一个提交" not in code_only
+
+
+def test_email_html_shows_a_neutral_placeholder_without_progress():
+    """取不到仓库信息时渲染中性空态，而不是留白或报"采集失败"（§6.8(4)）。"""
+    report = formatter.generate([_member_with_data()], DAY, "平台研发组")
+
+    assert report.progress is None
+    assert template.SECTION_PROGRESS in report.html
+    assert template.PROGRESS_EMPTY in report.html
+    # 它不是"数据获取失败"：工程数据源刻意不进 sources 四态（§3.4）
+    assert template.FETCH_FAILED not in report.html
+
+
+def test_email_progress_block_keeps_using_the_design_palette():
+    """新板块只许用 §6.7 色板内的颜色，不许自己造一个蓝。"""
+    html = formatter.generate(
+        [_member_with_data()], DAY, "平台研发组", progress=_progress()
+    ).html
+    colors = set(re.findall(r"#[0-9a-fA-F]{6}", html))
+
+    assert colors <= set(template.EMAIL_PALETTE)
+
+
+def test_report_title_follows_the_configured_subject_pattern():
+    """主题模板可配；默认保持旧格式（Task 7 v1.8 验收标准）。"""
+    assert template.report_title("平台研发组", DAY) == "平台研发组 2026-08-20"
+    assert (
+        template.report_title(
+            "孔子博智能日报",
+            date(2026, 10, 11),
+            subject_pattern="{grade}+{owner}+{date}+智能日报",
+            grade="研一",
+            owner="孔子博",
+        )
+        == "研一+孔子博+2026-10-11+智能日报"
+    )
+
+
+def test_unknown_subject_placeholders_are_kept_verbatim():
+    """不认识的占位符原样保留，不抛异常、不静默吃掉。"""
+    title = template.report_title(
+        "平台研发组", DAY, subject_pattern="{team_name} {date} {sprint}"
+    )
+
+    assert title == "平台研发组 2026-08-20 {sprint}"
+
+
+def test_report_title_never_hardcodes_personal_attributes():
+    """年级、姓名这类个人属性只能来自配置，模板代码里不许出现（proposal.md §3.1 v1.8）。"""
+    source = Path(template.__file__).read_text(encoding="utf-8")
+
+    assert "研一" not in source
+    assert "孔子博" not in source
 

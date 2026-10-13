@@ -60,10 +60,32 @@ def _build_token_provider(client: httpx.Client, config: LarkConfig):
     return LarkTokenManager(client, config.app_id, config.app_secret)
 
 
+def _epoch_to_datetime(value: float) -> datetime:
+    """把纪元时间换成 aware datetime；按量级判断是毫秒还是秒。
+
+    飞书 `/im/v1/messages` 的 `create_time` 是**毫秒的数字字符串**（如
+    ``'1791893569132'``）。1e11 秒 ≈ 公元 5138 年，所以「大于等于 1e11」一定是毫秒。
+    """
+    seconds = value / 1000.0 if value >= 1e11 else value
+    return datetime.fromtimestamp(seconds, tz=timezone.utc)
+
+
 def _parse_timestamp(value: object) -> datetime:
-    if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(float(value) / 1000.0, tz=timezone.utc)
-    text = str(value or "")
+    """解析消息时间。
+
+    三种真实形态都要认（v1.8.1 缺陷修复）：
+      - 毫秒**数字字符串**：``'1791893569132'`` —— 飞书实际返回的形态
+      - 数字（毫秒或秒）
+      - ISO 8601 文本，可带 ``Z`` 或偏移
+
+    旧实现只对 int/float 走纪元分支，数字字符串会掉进 ``fromisoformat`` 抛错，
+    最后**静默退化成"当前时刻"** —— 于是日报里每条飞书消息的时间都显示成采集时间。
+    """
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return _epoch_to_datetime(float(value))
+    text = str(value or "").strip()
+    if text.isdigit():
+        return _epoch_to_datetime(float(text))
     try:
         return datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:

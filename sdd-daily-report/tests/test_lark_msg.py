@@ -14,6 +14,7 @@ import json
 from datetime import datetime, timezone
 
 import httpx
+import pytest
 
 from collector import lark_msg
 from collector.lark_auth import LarkTokenManager
@@ -309,3 +310,51 @@ report:
         encoding="utf-8",
     )
     assert load_config(path).lark.auth_mode == "user"
+
+
+# ------------------------------------------------ 消息时间（v1.8.1 缺陷修复）
+
+
+def test_message_timestamp_is_the_send_time_not_the_collection_time(config, no_sleep):
+    """验收标准：MessageRecord.timestamp 必须是**消息发送时间**。
+
+    飞书 `/im/v1/messages` 的 `create_time` 是**毫秒的数字字符串**（实测
+    `'1791893569132'`）。旧实现只对 int/float 走纪元分支，数字字符串会掉进
+    `fromisoformat` 抛错，再静默退化成 datetime.now() —— 于是日报里每条飞书消息
+    的时间都显示成"采集那一刻"，而测试当时只断言了 isinstance(datetime)，
+    所以这个 bug 藏了很久。
+    """
+    item = _message("zhangsan@company.com", "这个项目的需求我下午确认")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "tenant_access_token" in str(request.url):
+            return httpx.Response(200, json=TOKEN_PAYLOAD)
+        return httpx.Response(200, json={"code": 0, "data": {"items": [item]}})
+
+    record = _collect(config, handler, no_sleep).records[0]
+
+    assert record.timestamp == datetime.fromtimestamp(1755676800, tz=timezone.utc)
+    assert record.timestamp.year == 2025
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("1755676800000", datetime(2025, 8, 20, 8, 0, tzinfo=timezone.utc)),   # 毫秒字符串
+        (1755676800000, datetime(2025, 8, 20, 8, 0, tzinfo=timezone.utc)),     # 毫秒数字
+        ("1755676800", datetime(2025, 8, 20, 8, 0, tzinfo=timezone.utc)),      # 秒字符串
+        ("2025-08-20T08:00:00Z", datetime(2025, 8, 20, 8, 0, tzinfo=timezone.utc)),
+        ("2025-08-20T16:00:00+08:00", datetime(2025, 8, 20, 8, 0, tzinfo=timezone.utc)),
+    ],
+)
+def test_parse_timestamp_accepts_every_shape_feishu_returns(raw, expected):
+    assert lark_msg._parse_timestamp(raw) == expected
+
+
+def test_parse_timestamp_falls_back_to_now_for_garbage():
+    """认不出来的形态才允许兜底成当前时刻，且只在这里兜底。"""
+    before = datetime.now(tz=timezone.utc)
+    parsed = lark_msg._parse_timestamp("不是时间")
+    after = datetime.now(tz=timezone.utc)
+
+    assert before <= parsed <= after

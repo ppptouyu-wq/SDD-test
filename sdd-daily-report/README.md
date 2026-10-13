@@ -61,7 +61,7 @@
    | ② 真实 GitHub 仓库（2026-04-24，不推送） | 拉真实提交 |
    | ③ 健康检查（--check） | 逐项检查配置 |
    | ④ 今天（真实推送，慎用） | 会真的发邮件/推飞书 |
-   | ⑤ 跑全部测试（pytest） | 402 个用例 |
+   | ⑤ 跑全部测试（pytest） | 409 个用例 |
    | ⑥ 只跑当前打开的测试文件 | 调试单个用例 |
    | ⑦ 展示页：本地只读查看已生成的日报 | 起本地网页看日报（v1.2 新增） |
 
@@ -332,7 +332,7 @@ v1.2 的前端是用 **OpenDesign** 迭代出来的，过程留了档：
 |---|---|---|
 | `tests/test_github.py` | 12 | GitHub 采集层 |
 | `tests/test_lark_task.py` | 7 | 飞书任务采集 |
-| `tests/test_lark_msg.py` | 13 | 飞书群消息采集（关键词过滤 + 敏感词剔除） |
+| `tests/test_lark_msg.py` | 20 | 飞书群消息采集（关键词过滤 + 敏感词剔除；v1.8.2 补消息时间的五种时间戳形态） |
 | `tests/test_attendance.py` | 12 | 飞书考勤采集（v1.1 新增） |
 | `tests/test_generator.py` | 41 | 日报生成（含 v1.1 考勤逻辑、v1.3 双 ID 身份映射与「今日无记录」渲染、v1.5 提交摘要截断与条目分组、v1.6 邮件卡片版式与计数/总结句、v1.7 配色白名单与成员名条、v1.8 工程进展段与可配主题） |
 | `tests/test_repo_progress.py` | 29 | 工程进展采集（v1.8 新增，自造临时 Git 仓库）：仓库定位、当日计数、版本号取最高、变更起点判定、闭环判定、规范覆盖率注入与降级 |
@@ -376,7 +376,7 @@ python -m pytest tests/ -v
    `_attendance_user_ids()`（从 `members[].lark_employee_id` 去重取名单）；
    `formatter.aggregate()` 增加 `by_lark_employee` 映射（空 ID 不入表）；
    `template.render_markdown()` 的考勤分支由两段变三段。
-6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.8 后为 402），规范与代码一起提交（书图 7-8 的闭环要求）。
+6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.8.2 后为 409），规范与代码一起提交（书图 7-8 的闭环要求）。
 
 真实跑通的证据（2026-10-09 那次）：日志从
 `飞书考勤采集失败 error: ... employeeNos is empty` 变成
@@ -558,6 +558,20 @@ v1.6 的邮件版式是照需求参考稿（一张手机邮件截图）做出来
 | 规范 | `specs/design.md` §3.4：判定表补一句「路径先按项目根归一（截到 `specs/` 这一段）再比对」 |
 | 代码 | `collector/repo_progress.py`：新增 `relative_to_project()`，判定与展示的规范链统一归一到项目根 |
 | 测试 | `tests/test_repo_progress.py` 26 → 29（两组嵌套路径参数化 + 一条"临时仓库里项目嵌子目录"的端到端） |
+
+### v1.8.2：修掉飞书消息时间静默退化成「采集时刻」
+
+体检飞书群消息时（`_probe_lark_msg.py`）发现每条消息的时间都等于**探针执行的那一刻**。
+打原始响应确认：飞书 `/im/v1/messages` 的 `create_time` 是**毫秒的数字字符串**
+（`'1791893569132'`），而旧 `_parse_timestamp()` 只对 `int`/`float` 走纪元分支，
+数字字符串会掉进 `datetime.fromisoformat()` 抛 `ValueError`，再静默 `return datetime.now()`
+—— 于是日报里每条飞书消息的时间都成了采集时间，而不是发送时间。
+旧测试只断言了 `isinstance(record.timestamp, datetime)`，所以这个 bug 一直没被发现。
+
+规范没写错（`MessageRecord.timestamp = 发送时间`），**起点在代码**：补一个
+`_epoch_to_datetime()`（`≥1e11` 判为毫秒，否则按秒），数字字符串也走这条路；
+`tests/test_lark_msg.py` 补五种时间戳形态的参数化与一条"发送时间不是采集时间"的断言
+（13 → 20 个用例）。
 
 ## 工程化配套（第 3、8、9 章）
 

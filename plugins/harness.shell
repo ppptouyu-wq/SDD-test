@@ -1,0 +1,110 @@
+"""harness.shell —— harness 的菜单/消息处理外壳（由 harness_plugin 驱动）。
+
+这份文件是"壳"：负责把外部消息里的 action / workflow / check / tasks 解出来，
+再交给 plugins/harness_plugin.py 执行。它本身不实现业务动作。
+
+自检命令：python scripts/check_shell_test.py plugins/harness.shell
+"""
+
+import json
+import re
+import sys
+from pathlib import Path
+from string import Template
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from plugins import harness_plugin  # noqa: E402
+
+# --------------------------------------------------------------------- 插件注册
+
+harness_plugin.register_plugin("source_edit")
+harness_plugin.register_plugin("shell")
+harness_plugin.register_plugin("task_manager")
+harness_plugin.register_plugin("rollback")
+
+P_PLUGINS = "source_edit|shell|task_manager|rollback"
+P_WORKFLOWS = "release|release-full|rollback"
+P_ACTIONS = "session_start|handle_message|workflow|check|rollback|push|source_edit"
+
+REPLY = Template(
+    "Source edit applied ($request_id):\n$results\nrepeated x$repeat"
+)
+
+
+def extract(content: str, key: str) -> str:
+    match = re.search(r'"%s"\s*:\s*"([^"]*)"' % re.escape(key), content or "")
+    return match.group(1) if match else ""
+
+
+def extract_list(content: str, key: str) -> list:
+    match = re.search(r'"%s"\s*:\s*(\[[^\]]*\])' % re.escape(key), content or "")
+    if not match:
+        return []
+    try:
+        return json.loads(match.group(1))
+    except Exception:
+        return []
+
+
+def session_start(mode: str = "autonomous", chat_id: str = "shell") -> dict:
+    """开会话：登记模式与插件表，然后宣告就绪。"""
+    return harness_plugin.session_start(mode)
+
+
+def handle_message(
+    chat_id: str, msg_id: str, content: str, use_workflow: bool = True
+) -> dict:
+    """处理一条消息：解析 action → 交给插件 → 需要时按 repeat 重放。"""
+    action = extract(content, "action")
+    workflow = extract(content, "workflow")
+    check_target = extract(content, "check")
+    tasks = extract_list(content, "tasks")
+
+    payload = harness_plugin.handle_message(chat_id, msg_id, content, use_workflow)
+
+    if action == "check":
+        payload["check"] = check_target or "plugins/harness.shell"
+    if workflow:
+        payload["workflow"] = workflow
+    if tasks:
+        payload["task_count"] = len(tasks)
+    if action == "source_edit":
+        payload["reply"] = REPLY.safe_substitute(
+            request_id=extract(content, "request_id") or msg_id,
+            results=payload.get("message", ""),
+            repeat=2,
+        )
+    return payload
+
+
+def check(shell_path: str = "plugins/harness.shell") -> dict:
+    """跑一次 shell 自检（syntax + contract），由 check_shell_test.py 执行。"""
+    content = json.dumps({"action": "check", "check": shell_path}, ensure_ascii=False)
+    return handle_message("shell", "check-1", content)
+
+
+def push(local: dict | None = None) -> str:
+    """把当前状态推到远端（真实实现由插件接管）。"""
+    local = local or {}
+    count = len(local.get("commits", [])) or 1
+    return "[ok] pushed %d commit(s)" % count
+
+
+def cli(argv: list[str]) -> int:
+    command = argv[1] if len(argv) > 1 else "session_start"
+    if command in ("session_start", "session-start"):
+        print(json.dumps(session_start(), ensure_ascii=False))
+        return 0
+    if command == "handle_message":
+        content = argv[2] if len(argv) > 2 else ""
+        print(json.dumps(handle_message("shell", "m1", content), ensure_ascii=False))
+        return 0
+    print("[err] unknown command: %s" % command)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(cli(sys.argv))

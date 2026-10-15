@@ -208,10 +208,10 @@ def test_single_source_failure_does_not_block_others(config, monkeypatch):
 
 
 def test_member_without_records_shows_no_record(config, monkeypatch):
-    """成员当日无记录时显示"今日无记录"。
+    """成员当日无记录时，各板块给出自己的空态说明（v1.10）。
 
     本场景下：张三只有 GitHub 提交、李四只有任务、王五只有消息，
-    因此每个成员的其余板块都应为"今日无记录"。
+    因此每个成员的其余板块都应给出对应板块的空态文案。
     """
     _wire_all_sources(monkeypatch, config)
 
@@ -222,8 +222,10 @@ def test_member_without_records_shows_no_record(config, monkeypatch):
     section = section.split("\n## ", 1)[0]  # 只取李四这一节
 
     assert "### 代码提交" in section
-    assert template.NO_RECORD in section      # 李四无代码提交、无消息
-    # 李四确实有任务，所以任务板块不应是"今日无记录"
+    assert template.NO_COMMITS in section      # 李四无代码提交
+    assert template.NO_MESSAGES in section     # 李四无消息
+    assert template.NO_RECORD not in section   # 不再用通用空态
+    # 李四确实有任务，所以任务板块不应是空态
     task_block = section.split("### 任务进展", 1)[1].split("### ", 1)[0]
     assert "日报模板评审" in task_block
 

@@ -105,6 +105,39 @@ def _read_log(root: Path, since: datetime, until: datetime) -> str:
     return completed.stdout
 
 
+def _read_last_commit(root: Path, until: datetime) -> str:
+    """取"当日之前最近一次提交"的日期（v1.10，design.md §3.4）。
+
+    只在当日没有任何提交时才调用：日报上只有一句"当日 0 次提交"时，读者分不清
+    这是"今天没动"还是"项目停了三周"，补一个日期就能区分。
+
+    取不到（仓库无历史、命令失败）一律返回空串 —— 不允许退回"当前时间"之类的臆测值。
+    """
+    args = [
+        "git",
+        "log",
+        "-1",
+        f"--until={until.strftime('%Y-%m-%d %H:%M:%S')}",
+        "--pretty=format:%ad",
+        "--date=short",
+    ]
+    try:
+        completed = subprocess.run(  # noqa: S603 - 固定命令 + 绝对路径，无 shell
+            args,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=GIT_TIMEOUT,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.info("工程进展：读取最近一次提交失败（%s）", exc)
+        return ""
+    return completed.stdout.strip()
+
+
 def _parse_log(output: str) -> list[tuple[str, list[str]]]:
     """把 git log 输出切成 [(提交标题, [涉及文件…]), …]。
 
@@ -221,13 +254,16 @@ def collect(
         code_changed=code_changed,
         same_commit=same_commit,
         spec_coverage=coverage_text,
+        # 当日没动才去问"上一次是什么时候"（v1.10）：有提交时"最近一次"就是今天，没有增量信息
+        last_commit_date="" if commits else _read_last_commit(root, since),
     )
     logger.info(
-        "工程进展采集完成 repo=%s commits=%d version=%s layer=%s same_commit=%s",
+        "工程进展采集完成 repo=%s commits=%d version=%s layer=%s same_commit=%s last_commit=%s",
         root,
         progress.commit_count,
         progress.version or "-",
         progress.change_layer,
         progress.same_commit,
+        progress.last_commit_date or "-",
     )
     return CollectResult.ok([progress])

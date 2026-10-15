@@ -2,7 +2,7 @@ openapi: 3.0.3
 
 info:
   title: 智能日报生成器 — 接口契约（api-spec.yaml）
-  version: 1.8.0
+  version: 1.10.0
   description: |
     本书 SDD 六阶段工作流【阶段三：接口契约】的产物之一（与 data-models.md 配套）。
 
@@ -275,8 +275,8 @@ components:
 
     RepoProgress:
       type: object
-      description: 当日工程进展（v1.8 新增，对应 design.md §3.4 / §6.8）
-      required: [commit_count, version, change_layer, spec_changed, code_changed, same_commit, spec_coverage]
+      description: 当日工程进展（v1.8 新增，对应 design.md §3.4 / §6.8；v1.10 增 last_commit_date）
+      required: [commit_count, version, change_layer, spec_changed, code_changed, same_commit, spec_coverage, last_commit_date]
       properties:
         commit_count:
           type: integer
@@ -300,6 +300,9 @@ components:
         spec_coverage:
           type: string
           description: 规范覆盖率文本，如 "97/98 = 99.0%"；取不到则空串
+        last_commit_date:
+          type: string
+          description: 当日无提交时的"最近一次提交日期"（YYYY-MM-DD）；当日有提交或取不到则空串（v1.10）
 
     # ---------- 展示层视图模型（v1.2 新增）----------
     SourceView:

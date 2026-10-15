@@ -85,6 +85,10 @@ class RepoProgress:
     code_changed: bool = False  # 当日是否改动了代码或测试
     same_commit: bool = False  # 是否至少有一个提交同时改了规范与代码（书图 7-8 闭环）
     spec_coverage: str = ""  # 规范覆盖率文本，如 "97/98 = 99.0%"；取不到则空串
+    # 当日**没有**提交时填"最近一次提交的日期"（YYYY-MM-DD，v1.10）：
+    # 只写"当日 0 次提交"读者分不清是"今天没动"还是"项目停了三周"。
+    # 当日有提交、仓库无历史、取数失败时一律空串 —— 不允许臆测（design.md §3.4）。
+    last_commit_date: str = ""
 
 
 @dataclass

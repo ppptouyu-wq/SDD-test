@@ -295,3 +295,31 @@ def test_parse_log_splits_commits_and_files():
 
 def test_parse_log_ignores_empty_output():
     assert repo_progress._parse_log("") == []
+
+
+# ------------------------------------------- 最近一次提交日期（v1.10 / design.md §3.4）
+
+def test_last_commit_date_is_filled_when_the_day_has_no_commit(repo: Path):
+    """当日没有提交 → 填"最近一次提交"的日期，让读者知道上次动是什么时候。"""
+    _commit(repo, "feat: 前一天的工作", {"main.py": "x\n"}, day="2026-08-19")
+
+    record = repo_progress.collect(repo, SINCE, UNTIL).records[0]
+
+    assert record.commit_count == 0
+    assert record.last_commit_date == "2026-08-19"
+
+
+def test_last_commit_date_is_empty_when_the_day_has_commits(repo: Path):
+    """当日有提交时不填 —— "最近一次"就是今天，没有增量信息。"""
+    _commit(repo, "feat: 今天的工作", {"main.py": "x\n"})
+
+    assert repo_progress.collect(repo, SINCE, UNTIL).records[0].last_commit_date == ""
+
+
+def test_last_commit_date_is_never_invented_in_an_empty_repository(repo: Path):
+    """仓库完全没有提交历史时不臆造日期：`git log` 本身就失败，采集显式返回 fail。"""
+    result = repo_progress.collect(repo, SINCE, UNTIL)
+
+    assert result.success is False
+    assert result.records == []
+    assert result.error_message

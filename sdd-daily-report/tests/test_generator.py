@@ -99,13 +99,26 @@ def test_generate_produces_renderable_html():
 
 
 def test_member_without_records_shows_no_record():
-    """验收标准：若某成员当日无任何记录，日报中需要显示"今日无记录"。"""
+    """验收标准：某成员当日无任何记录时，各板块给出**自己的**空态说明（v1.10）。
+
+    v1.10 之前四格统一渲染「今日无记录」，读者看不出空的是提交还是数据；
+    现在每格说清"空的是什么"，且四句话必须互不相同。
+    """
     empty = MemberReport(name="王五", github_username="wangwu")
 
     report = formatter.generate([empty], DAY, "平台研发组")
 
-    assert report.markdown.count(template.NO_RECORD) == 3  # 三个板块各一条
-    assert template.NO_RECORD in report.html
+    for text in (
+        template.NO_COMMITS,
+        template.NO_TASKS,
+        template.NO_MESSAGES,
+    ):
+        assert text in report.markdown
+        assert text in report.html
+    # 四段空态文案互不相同（用同一句话打发就等于没说明白空的是什么）
+    assert len({template.NO_COMMITS, template.NO_TASKS, template.NO_MESSAGES}) == 3
+    # 日报正文不再使用展示层口径的通用空态
+    assert template.NO_RECORD not in report.markdown
 
 
 def test_failed_source_is_marked_in_report():
@@ -399,11 +412,12 @@ def test_aggregate_does_not_let_blank_employee_ids_collide():
 
 
 def test_markdown_says_no_record_when_attendance_succeeded_but_empty():
-    """考勤采集成功但当天没打卡 → "今日无记录"，不是"数据获取失败"，也不是留白。
+    """考勤采集成功但当天没打卡 → 「当日无打卡记录」，不是"数据获取失败"，也不是留白。
 
     v1.3 回归背景：v1.1 的调用方没传名单，飞书回业务错误 employeeNos is empty，
     日报误报"数据获取失败"；把名单接上之后，飞书对"确实没打卡"返回的是
     code=0 + 空数组 —— 那时若照旧把考勤段整段省略，读者又会以为"这个模块没了"。
+    v1.10 起这句话说清缺的是"打卡"，不再借用通用的"今日无记录"。
     """
     members = [MemberReport(name="张三", github_username="zhangsan")]
 
@@ -416,7 +430,8 @@ def test_markdown_says_no_record_when_attendance_succeeded_but_empty():
     )
 
     assert "### 考勤" in markdown
-    assert template.NO_RECORD in markdown
+    assert template.NO_ATTENDANCE_RECORD in markdown
+    assert template.NO_RECORD not in markdown
     assert template.ATTENDANCE_UNAVAILABLE not in markdown
 
 
@@ -627,7 +642,7 @@ def test_email_html_stays_friendly_to_mail_clients():
 
 
 def test_email_html_marks_failed_sources_and_empty_sections():
-    """采集失败要显式告警；某板块为空渲染「今日无记录」而不是留白（§6.7(5)）。"""
+    """采集失败要显式告警；某板块为空时给出该板块自己的空态说明，而不是留白（§6.7(5)）。"""
     member = _member_with_data()
     member.commits, member.tasks, member.messages = [], [], []
 
@@ -640,8 +655,11 @@ def test_email_html_marks_failed_sources_and_empty_sections():
 
     assert "⚠️ 数据获取失败：飞书考勤" in report.html
     assert template.overview_counts(report) == (0, 0, 0)
-    # 三个板块各自有「今日无记录」，考勤是"数据获取失败"三态里的失败态
-    assert report.html.count("今日无记录") >= 3
+    # v1.10：三格各说自己的话（不再统一"今日无记录"），考勤是"数据获取失败"三态里的失败态
+    assert template.NO_COMMITS in report.html
+    assert template.NO_TASKS in report.html
+    assert template.NO_MESSAGES in report.html
+    assert template.NO_RECORD not in report.html
     assert template.ATTENDANCE_UNAVAILABLE in report.html
 
 
@@ -695,6 +713,7 @@ def _progress(**overrides) -> RepoProgress:
         "code_changed": True,
         "same_commit": True,
         "spec_coverage": "97/98 = 99.0%",
+        "last_commit_date": "",
     }
     values.update(overrides)
     return RepoProgress(**values)
@@ -745,6 +764,56 @@ def test_email_html_shows_a_neutral_placeholder_without_progress():
     assert template.PROGRESS_EMPTY in report.html
     # 它不是"数据获取失败"：工程数据源刻意不进 sources 四态（§3.4）
     assert template.FETCH_FAILED not in report.html
+
+
+def test_email_progress_shows_the_last_commit_date_when_the_day_is_empty():
+    """当日 0 次提交时补一行「最近一次提交」，让"今天没动"与"停了三周"能区分（v1.10）。"""
+    html = formatter.generate(
+        [_member_with_data()],
+        DAY,
+        "平台研发组",
+        progress=_progress(
+            commit_count=0,
+            version="",
+            change_layer="未识别",
+            spec_changed=[],
+            code_changed=False,
+            same_commit=False,
+            last_commit_date="2026-10-13",
+        ),
+    ).html
+    text = _plain(html)
+
+    assert "当日 0 次提交" in text
+    assert "最近一次提交：2026-10-13" in text
+
+
+def test_email_progress_omits_the_last_commit_line_when_there_are_commits_today():
+    """当日有提交时不出现「最近一次提交」——"最近一次"就是今天，没有增量信息（v1.10）。"""
+    html = formatter.generate(
+        [_member_with_data()],
+        DAY,
+        "平台研发组",
+        progress=_progress(last_commit_date="2026-10-13"),
+    ).html
+
+    assert "当日 3 次提交" in _plain(html)
+    assert "最近一次提交" not in _plain(html)
+
+
+def test_email_progress_never_invents_a_last_commit_date():
+    """取不到日期（空串）时不渲染这一行，更不许臆造一个日期填上（v1.10）。"""
+    html = formatter.generate(
+        [_member_with_data()],
+        DAY,
+        "平台研发组",
+        progress=_progress(
+            commit_count=0, version="", spec_changed=[], code_changed=False,
+            same_commit=False, last_commit_date="",
+        ),
+    ).html
+
+    assert "最近一次提交" not in _plain(html)
 
 
 def test_email_progress_block_keeps_using_the_design_palette():

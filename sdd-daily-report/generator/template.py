@@ -18,6 +18,13 @@ from jinja2 import Template
 from shared.models import CommitRecord, DailyReport, MemberReport, RepoProgress
 
 NO_RECORD = "今日无记录"
+# 空态文案（v1.10，design.md §6.7(5)）：每个板块说清"空的是什么"。
+# 统一写一句"今日无记录"的问题是读者看不出到底缺什么 —— 四格长得一模一样，
+# 一份空日报等于什么都没说。NO_RECORD 保留给展示层口径的旧调用，日报正文不再用它。
+NO_COMMITS = "当日无代码提交"
+NO_TASKS = "当日无任务状态变更"
+NO_ATTENDANCE_RECORD = "当日无打卡记录"
+NO_MESSAGES = "当日无符合条件的讨论"
 FETCH_FAILED = "数据获取失败"
 # tasks.md Task 6 验收标准（v1.1）：考勤数据不可用时显式标注，不静默留白
 ATTENDANCE_UNAVAILABLE = "考勤数据暂不可用"
@@ -189,7 +196,7 @@ def render_markdown(
                 if summary:
                     lines.append(f"  - {summary}")
         else:
-            lines.append(f"- {NO_RECORD}")
+            lines.append(f"- {NO_COMMITS}")
         lines.append("")
 
         lines.append(f"### {SECTION_TASKS}")
@@ -197,7 +204,7 @@ def render_markdown(
             for task in member.tasks:
                 lines.append(f"- {task.title}：{task.status_from} → {task.status_to}")
         else:
-            lines.append(f"- {NO_RECORD}")
+            lines.append(f"- {NO_TASKS}")
         lines.append("")
 
         # 考勤段的位置由 tasks.md Task 6（v1.1）规定：
@@ -217,11 +224,11 @@ def render_markdown(
             lines.append(f"- {ATTENDANCE_UNAVAILABLE}")
             lines.append("")
         elif attendance_collected:
-            # Task 6 验收标准（v1.3）：采集成功但本人无记录 = 当天没打卡，
-            # 说"今日无记录"。整段留白会被误读成"这个模块不存在"，
-            # 也与展示层（webview 显示"今日无记录"）对不上。
+            # Task 6 验收标准（v1.3）：采集成功但本人无记录 = 当天没打卡。
+            # v1.10 起说清"当日无打卡记录"：整段留白会被误读成"这个模块不存在"，
+            # 而一句通用的"今日无记录"又看不出缺的是打卡还是数据。
             lines.append("### 考勤")
-            lines.append(f"- {NO_RECORD}")
+            lines.append(f"- {NO_ATTENDANCE_RECORD}")
             lines.append("")
 
         lines.append(f"### {SECTION_MESSAGES}")
@@ -229,7 +236,7 @@ def render_markdown(
             for message in member.messages:
                 lines.append(f"- [{message.chat_name}] {message.content}")
         else:
-            lines.append(f"- {NO_RECORD}")
+            lines.append(f"- {NO_MESSAGES}")
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
@@ -592,6 +599,11 @@ def _progress_callout(progress: RepoProgress) -> str:
     if progress.spec_changed:
         details.append("规范链：" + _escape("、".join(progress.spec_changed)))
 
+    # v1.10：当日没动时才说"上一次是什么时候"。只有一句"当日 0 次提交"时，
+    # 读者分不清是"今天没动"还是"项目停了三周"（design.md §3.4、§6.8(1)）。
+    if not progress.commit_count and progress.last_commit_date:
+        details.append(f"最近一次提交：{_escape(progress.last_commit_date)}")
+
     # 闭环判定：文案要贴合事实，不能拿"只改代码"去说"规范与代码分离"
     if progress.spec_changed and progress.code_changed:
         details.append(
@@ -716,7 +728,7 @@ def render_email_html(report: DailyReport) -> str:
         else:
             blocks.append(
                 _email_callout(
-                    NO_RECORD, background=EMAIL_NEUTRAL_SOFT, accent=EMAIL_BORDER
+                    NO_COMMITS, background=EMAIL_NEUTRAL_SOFT, accent=EMAIL_BORDER
                 )
             )
 
@@ -734,7 +746,7 @@ def render_email_html(report: DailyReport) -> str:
         else:
             blocks.append(
                 _email_callout(
-                    NO_RECORD, background=EMAIL_NEUTRAL_SOFT, accent=EMAIL_BORDER
+                    NO_TASKS, background=EMAIL_NEUTRAL_SOFT, accent=EMAIL_BORDER
                 )
             )
 
@@ -760,7 +772,9 @@ def render_email_html(report: DailyReport) -> str:
             blocks.append(_email_section_title("🕘", "考勤"))
             blocks.append(
                 _email_callout(
-                    NO_RECORD, background=EMAIL_NEUTRAL_SOFT, accent=EMAIL_BORDER
+                    NO_ATTENDANCE_RECORD,
+                    background=EMAIL_NEUTRAL_SOFT,
+                    accent=EMAIL_BORDER,
                 )
             )
 
@@ -778,7 +792,7 @@ def render_email_html(report: DailyReport) -> str:
         else:
             blocks.append(
                 _email_callout(
-                    NO_RECORD, background=EMAIL_NEUTRAL_SOFT, accent=EMAIL_BORDER
+                    NO_MESSAGES, background=EMAIL_NEUTRAL_SOFT, accent=EMAIL_BORDER
                 )
             )
 

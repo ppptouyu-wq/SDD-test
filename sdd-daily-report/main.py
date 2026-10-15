@@ -24,7 +24,7 @@ from pathlib import Path
 
 from collector import github as github_collector
 from collector import lark_attendance, lark_msg, lark_task, repo_progress
-from generator import formatter
+from generator import formatter, template
 from notifier import email as email_notifier
 from notifier import lark_bot
 from shared.calendar import is_working_day
@@ -229,12 +229,22 @@ def run(
         messages=results[SOURCE_LARK_MSG],
         attendance=results.get(SOURCE_LARK_ATTENDANCE),
     )
+    # v1.11：正文标题区的标题与邮件主题同源 —— 都用 report_title() 和同一份 email 配置
+    # 渲染，收件箱里看到的名字与点开后正文最上方的名字因此不可能各写一套（design.md §6.7(2)）。
+    email_title = template.report_title(
+        config.report.team_name,
+        target_day,
+        subject_pattern=config.email.subject_pattern,
+        grade=config.email.grade,
+        owner=config.email.owner,
+    )
     report = formatter.generate(
         members,
         target_day,
         config.report.team_name,
         sources=sources,
         progress=_progress_of(results),
+        title=email_title,
     )
 
     store = storage or ReportStorage(config.storage_path)

@@ -74,6 +74,26 @@ def test_run_with_mock_flag_end_to_end(config):
     assert "### 考勤" in row["markdown"]
 
 
+def test_email_subject_and_header_title_come_from_the_same_rendering(config):
+    """v1.11：邮件主题与正文标题区同源 —— 同一份 email 配置、同一个 report_title()。
+    proposal.md §3.1 v1.11；design.md §6.7(2)。
+    """
+    with ReportStorage(config.storage_path) as storage:
+        app.run(config, day=DAY, mock=True, push=False, storage=storage)
+        row = storage.get(DAY)
+
+    expected = app.template.report_title(
+        config.report.team_name,
+        DAY,
+        subject_pattern=config.email.subject_pattern,
+        grade=config.email.grade,
+        owner=config.email.owner,
+    )
+
+    assert f">{expected}</td>" in row["html"]
+    assert f"<title>{expected}</title>" in row["html"]
+
+
 # ============================================ 命令行入口
 
 def test_cli_mock_returns_zero_exit_code(config, tmp_dir, monkeypatch):

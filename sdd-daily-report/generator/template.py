@@ -119,7 +119,8 @@ def report_title(
     「平台研发组智能日报工作日报」。日期保留 —— 一天一封，收件箱里要能分辨是哪天。
 
     v1.8 起模板可配（`email.subject_pattern`），支持 `{team_name}`/`{date}`/
-    `{grade}`/`{owner}` 四个占位符，用于「{grade}+{owner}+{date}+智能日报」这类要求。
+    `{grade}`/`{owner}` 四个占位符，用于「{grade}{owner}{date}智能日报」这类要求
+    （占位符之间要不要分隔符由模板自己写；v1.11 起本项目用直连形式）。
     年级与姓名是**个人属性**，只从配置取值，不写进模板代码。
     **未知占位符原样保留**：宁可让收件人看到 `{foo}` 这种明显异常，
     也不要静默吞掉一个拼错的占位符。
@@ -629,8 +630,8 @@ def _progress_callout(progress: RepoProgress) -> str:
     return _email_callout(inner)
 
 
-def render_email_html(report: DailyReport) -> str:
-    """渲染邮件日报的 HTML（design.md §6.7，v1.6；v1.8 增至五段）。
+def render_email_html(report: DailyReport, *, title: str = "") -> str:
+    """渲染邮件日报的 HTML（design.md §6.7，v1.6；v1.8 增至五段；v1.11 标题与主题同源）。
 
     与 `markdown_to_html()` 的区别：这里**直接按结构渲染**。原因是新版式要做汇总 ——
     "概览计数""今日总结句""每个成员在哪些仓库提交了多少次、累计多少行"都要在
@@ -639,6 +640,11 @@ def render_email_html(report: DailyReport) -> str:
 
     五段：标题区 → 今日概览（三张计数卡 + v1.9 的一行代码变更行数）→ 今日总结 →
     今日工程进展（v1.8，团队级）→ 按成员分组。
+
+    :param title: 标题区显示的标题（v1.11）。由 `main.py` 用 `report_title()` 与同一份
+        `email` 配置渲染，也就是邮件主题那一串 —— 收件箱里看到的名字与点开后正文
+        最上方的名字因此不可能各写一套。传入时不再另挂日期片段（标题里已含日期）；
+        空串时回退到 v1.7 的「`team_name` + 日期同行」形态。
     """
     sources = report.sources or {}
     attendance_failed = bool(sources) and sources.get(ATTENDANCE_SOURCE) is False
@@ -652,13 +658,19 @@ def render_email_html(report: DailyReport) -> str:
     day_text = _escape(report.date.isoformat())
     blocks: list[str] = []
 
-    # ---- 1. 标题区（v1.7：报告名与日期同行，生成时间靠右）----
+    # ---- 1. 标题区（v1.7：报告名与日期同行，生成时间靠右；v1.11：title 传入时与主题同源）----
+    if title:
+        heading = _escape(title)
+    else:
+        heading = (
+            f"{_escape(report.team_name)}"
+            f'<span style="font-size:13px;font-weight:400;color:{EMAIL_FG_2};">　{day_text}</span>'
+        )
     blocks.append(
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">'
         "<tr>"
         f'<td valign="bottom" style="font-size:23px;line-height:1.3;font-weight:700;'
-        f'color:{EMAIL_BRAND_DEEP};">{_escape(report.team_name)}'
-        f'<span style="font-size:13px;font-weight:400;color:{EMAIL_FG_2};">　{day_text}</span></td>'
+        f'color:{EMAIL_BRAND_DEEP};">{heading}</td>'
         f'<td valign="bottom" align="right" style="font-size:12px;'
         f'color:{EMAIL_FOOTER_FG};white-space:nowrap;">'
         f"生成于 {_escape(_datetime_text(report.generated_at))}</td>"
@@ -797,7 +809,7 @@ def render_email_html(report: DailyReport) -> str:
             )
 
     return _email_document(
-        f"{report.team_name} {report.date.isoformat()}",
+        title or f"{report.team_name} {report.date.isoformat()}",
         "\n".join(blocks),
     )
 

@@ -61,7 +61,7 @@
    | ② 真实 GitHub 仓库（2026-04-24，不推送） | 拉真实提交 |
    | ③ 健康检查（--check） | 逐项检查配置 |
    | ④ 今天（真实推送，慎用） | 会真的发邮件/推飞书 |
-   | ⑤ 跑全部测试（pytest） | 426 个用例 |
+   | ⑤ 跑全部测试（pytest） | 429 个用例 |
    | ⑥ 只跑当前打开的测试文件 | 调试单个用例 |
    | ⑦ 展示页：本地只读查看已生成的日报 | 起本地网页看日报（v1.2 新增） |
 
@@ -334,11 +334,11 @@ v1.2 的前端是用 **OpenDesign** 迭代出来的，过程留了档：
 | `tests/test_lark_task.py` | 7 | 飞书任务采集 |
 | `tests/test_lark_msg.py` | 23 | 飞书群消息采集（关键词过滤 + 敏感词剔除 + v1.8.2 五种时间戳形态 + v1.8.3 排除应用自身消息） |
 | `tests/test_attendance.py` | 17 | 飞书考勤采集（v1.1 新增） |
-| `tests/test_generator.py` | 47 | 日报生成（含 v1.1 考勤逻辑、v1.3 双 ID 身份映射与「今日无记录」渲染、v1.5 提交摘要截断与条目分组、v1.6 邮件卡片版式与计数/总结句、v1.7 配色白名单与成员名条、v1.8 工程进展段与可配主题、v1.8.4 考勤行缺失侧呈现、v1.9 概览下的代码变更行数、v1.10 分板块空态与最近一次提交） |
+| `tests/test_generator.py` | 49 | 日报生成（含 v1.1 考勤逻辑、v1.3 双 ID 身份映射与「今日无记录」渲染、v1.5 提交摘要截断与条目分组、v1.6 邮件卡片版式与计数/总结句、v1.7 配色白名单与成员名条、v1.8 工程进展段与可配主题、v1.8.4 考勤行缺失侧呈现、v1.9 概览下的代码变更行数、v1.10 分板块空态与最近一次提交、v1.11 正文标题与主题同源） |
 | `tests/test_repo_progress.py` | 32 | 工程进展采集（v1.8 新增，自造临时 Git 仓库）：仓库定位、当日计数、版本号取最高、变更起点判定、闭环判定、规范覆盖率注入与降级、v1.10 最近一次提交日期 |
 | `tests/test_email.py` | 7 | SMTP 推送 |
 | `tests/test_lark_bot.py` | 8 | 飞书机器人推送 |
-| `tests/test_main.py` | 21 | `main.py` 入口：编排、`load_dotenv`、`load_tasks_file`、CLI 退出码、路径锚定、v1.3 考勤名单接线、v1.4 仅工作日开关默认关闭 |
+| `tests/test_main.py` | 22 | `main.py` 入口：编排、`load_dotenv`、`load_tasks_file`、CLI 退出码、路径锚定、v1.3 考勤名单接线、v1.4 仅工作日开关默认关闭、v1.11 正文标题与邮件主题同源 |
 | `tests/test_integration.py` | 12 | 端到端集成：全链路、单源失败不阻塞、v1.4 周末/节假日默认照常生成 |
 
 另有 10 个测试文件覆盖第 8~10 章的 Agent 设计模式与治理层（书里未规定文件清单）：
@@ -376,7 +376,7 @@ python -m pytest tests/ -v
    `_attendance_user_ids()`（从 `members[].lark_employee_id` 去重取名单）；
    `formatter.aggregate()` 增加 `by_lark_employee` 映射（空 ID 不入表）；
    `template.render_markdown()` 的考勤分支由两段变三段。
-6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.10 后为 426），规范与代码一起提交（书图 7-8 的闭环要求）。
+6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.11 后为 429），规范与代码一起提交（书图 7-8 的闭环要求）。
 
 真实跑通的证据（2026-10-09 那次）：日志从
 `飞书考勤采集失败 error: ... employeeNos is empty` 变成
@@ -653,6 +653,27 @@ v1.6 的邮件版式是照需求参考稿（一张手机邮件截图）做出来
 **判定**：这是**需求变更**（"日报说什么"属产品行为）—— 起点在 `proposal.md`，规范与代码同一个提交。
 
 **一键复现**：`python main.py --no-push`（空日报那天应看到四句各自的空态文案，以及「最近一次提交：…」）。
+
+### v1.11：正文标题与邮件主题同源，主题去掉中间的 `+`
+
+| 层级 | 改了什么 |
+|---|---|
+| `proposal.md` §3.1 | 主题模板的示例改为直连形式；新增一条验收标准：同一封邮件里正文标题区的标题必须与邮件主题一致 |
+| `design.md` §4 | `generator.generate(...)` 与 `template.render_email_html(...)` 都增可选参数 `title`（空串回退旧形态） |
+| `design.md` §6.7(2) | 标题区写清"与主题同源"：传入 `title` 时直接呈现该标题、不再另挂日期片段；主题段的分隔符口径更新 |
+| `tasks.md` Task 7 | 新增 4 条 v1.11 验收标准；迭代记录追加一句 |
+| `generator/template.py` | `render_email_html(report, *, title="")`：标题区与 HTML `<title>` 都用这一串 |
+| `generator/formatter.py` | `generate(..., title="")` 透传给渲染器 |
+| `main.py` | 用 `template.report_title()` + 同一份 `email` 配置算出标题，同时喂给正文与主题 |
+| `config.yaml` | `subject_pattern` 改为 `"{grade}{owner}{date}智能日报"`（不再夹 `+`） |
+
+**触发**：老师要求「主题把中间的 `+` 去掉，正文首页那个标题也改成一样的」。
+
+**为什么加参数而不是各自拼**：主题由 `notifier/email.py` 从配置算，正文标题由渲染器画；
+两边各写一套迟早会漂移（改了一处忘另一处，收件箱与正文就是两个名字）。
+现在两处都走 `report_title()`，同一份配置、同一个函数。
+
+**一键复现**：`python main.py --no-push`，或直接看 `data/reports.db` 里当天的 `html`。
 
 ## 工程化配套（第 3、8、9 章）
 

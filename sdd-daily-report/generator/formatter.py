@@ -109,6 +109,7 @@ def generate(
     *,
     sources: dict[str, bool] | None = None,
     progress: RepoProgress | None = None,
+    title: str = "",
     generated_at: datetime | None = None,
     now: Callable[[], datetime] | None = None,
 ) -> DailyReport:
@@ -117,6 +118,8 @@ def generate(
     :param sources: 各数据源采集是否成功（用于标注"数据获取失败"，
         以及考勤采集失败时的"考勤数据暂不可用"）。
     :param progress: 当日工程进展（v1.8，见 design.md §3.4）；None = 未记录。
+    :param title: 邮件标题区的标题（v1.11）。由调用方用 `template.report_title()` 与
+        同一份 email 配置渲染，与邮件主题同源；空串时回退到「报告名 + 日期」。
     :raises GeneratorError: 渲染失败。
     """
     if not members:
@@ -161,7 +164,7 @@ def generate(
         progress=progress,
     )
     try:
-        report.html = template.render_email_html(report)
+        report.html = template.render_email_html(report, title=title)
     except Exception as exc:  # noqa: BLE001 - 转换为领域异常
         raise GeneratorError(f"日报渲染失败：{exc}") from exc
     logger.info(

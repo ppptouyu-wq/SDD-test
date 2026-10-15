@@ -896,3 +896,35 @@ def test_email_change_line_shows_zeros_when_there_is_no_commit():
     assert "-0" in report.html
 
 
+# ---- v1.11：正文标题区的标题与邮件主题同源 ----
+# 触发：老师要求「主题把中间的 + 去掉，正文首页那个标题也改成一样的」。
+# 判定为需求变更（呈现什么内容属产品行为）→ proposal.md §3.1 → design.md §6.7(2)。
+
+
+def test_email_header_title_is_the_subject_when_provided():
+    """传入 title 时，标题区与 <title> 都必须是主题那一串，且不再另挂日期（proposal.md §3.1 v1.11）。"""
+    title = template.report_title(
+        "平台研发组",
+        DAY,
+        subject_pattern="{grade}{owner}{date}智能日报",
+        grade="研一",
+        owner="张三",
+    )
+    report = formatter.generate([_member_with_data()], DAY, "平台研发组", title=title)
+
+    assert title == "研一张三2026-08-20智能日报"
+    assert f">{title}</td>" in report.html
+    assert f"<title>{title}</title>" in report.html
+    # 标题里本来就含日期，不能再挂一个日期片段（否则会读成两个名字）
+    assert f"{title}<span" not in report.html
+    assert ">平台研发组<span" not in report.html
+
+
+def test_email_header_falls_back_to_team_name_and_date_without_title():
+    """title 为空串时回退到 v1.7 的形态，旧调用方不受影响（design.md §6.7(2)）。"""
+    report = formatter.generate([_member_with_data()], DAY, "平台研发组")
+
+    assert ">平台研发组<span" in report.html
+    assert "<title>平台研发组 2026-08-20</title>" in report.html
+
+

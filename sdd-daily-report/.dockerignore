@@ -1,0 +1,49 @@
+# 构建上下文排除清单（specs/design.md §7.2）
+#
+# 作用有两个：① 别把凭据和本地数据打进镜像层；② 别把几十 MB 的无关文件塞进
+# 构建上下文（上下文越大，docker build 越慢，远端构建尤其明显）。
+#
+# 注意：`config.yaml.example` 必须**保留**——镜像要靠它给部署方一个模板。
+# 下面的模式只排除 `config.yaml` 与 `config.<name>.yaml`，不会误伤 `.example`。
+
+# ---- 版本控制与 CI 元数据 ----
+.git
+.gitignore
+.github
+
+# ---- 本地数据与凭据（绝不进镜像）----
+data/
+.env
+.env.*
+config.yaml
+config.*.yaml
+
+# ---- 测试与开发辅助（运行镜像不需要）----
+tests/
+_build_scripts/
+_shots/
+_temp_cleanup/
+build_image_check/
+pages/
+pages_opt/
+opendesign_brief/
+opendesign_output/
+history_bundles/
+
+# ---- Python 缓存与虚拟环境 ----
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# ---- 编辑器与杂项 ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+*.db
+*.sqlite3

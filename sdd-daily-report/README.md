@@ -61,7 +61,7 @@
    | ② 真实 GitHub 仓库（2026-04-24，不推送） | 拉真实提交 |
    | ③ 健康检查（--check） | 逐项检查配置 |
    | ④ 今天（真实推送，慎用） | 会真的发邮件/推飞书 |
-   | ⑤ 跑全部测试（pytest） | 429 个用例 |
+   | ⑤ 跑全部测试（pytest） | 450 个用例 |
    | ⑥ 只跑当前打开的测试文件 | 调试单个用例 |
    | ⑦ 展示页：本地只读查看已生成的日报 | 起本地网页看日报（v1.2 新增） |
 
@@ -341,10 +341,10 @@ v1.2 的前端是用 **OpenDesign** 迭代出来的，过程留了档：
 | `tests/test_main.py` | 22 | `main.py` 入口：编排、`load_dotenv`、`load_tasks_file`、CLI 退出码、路径锚定、v1.3 考勤名单接线、v1.4 仅工作日开关默认关闭、v1.11 正文标题与邮件主题同源 |
 | `tests/test_integration.py` | 12 | 端到端集成：全链路、单源失败不阻塞、v1.4 周末/节假日默认照常生成 |
 
-另有 10 个测试文件覆盖第 8~10 章的 Agent 设计模式与治理层（书里未规定文件清单）：
+另有 11 个测试文件覆盖第 8~10 章的 Agent 设计模式与治理层（书里未规定文件清单）：
 `test_agents.py`、`test_team_practice.py`、`test_contracts.py`、`test_framework.py`、
 `test_suitability.py`、`test_tool_configs.py`、`test_harness.py`、`test_shared.py`、
-`test_dockerfile.py`，以及 v1.2 新增的 `test_webview.py`（50 个用例）。
+`test_dockerfile.py`（13 个用例）、`test_workflows.py`（15 个用例），以及 v1.2 新增的 `test_webview.py`（50 个用例）。
 
 在本目录下，书中那条命令可以一字不改地运行：
 
@@ -376,7 +376,7 @@ python -m pytest tests/ -v
    `_attendance_user_ids()`（从 `members[].lark_employee_id` 去重取名单）；
    `formatter.aggregate()` 增加 `by_lark_employee` 映射（空 ID 不入表）；
    `template.render_markdown()` 的考勤分支由两段变三段。
-6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.11 后为 429），规范与代码一起提交（书图 7-8 的闭环要求）。
+6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.12 后为 450），规范与代码一起提交（书图 7-8 的闭环要求）。
 
 真实跑通的证据（2026-10-09 那次）：日志从
 `飞书考勤采集失败 error: ... employeeNos is empty` 变成
@@ -674,6 +674,32 @@ v1.6 的邮件版式是照需求参考稿（一张手机邮件截图）做出来
 现在两处都走 `report_title()`，同一份配置、同一个函数。
 
 **一键复现**：`python main.py --no-push`，或直接看 `data/reports.db` 里当天的 `html`。
+
+### v1.12：CI/CD 流水线与镜像交付（课程 CI/CD 主题）
+
+| 层级 | 改了什么 |
+|---|---|
+| `proposal.md` §2.1 | 新增「持续集成与镜像交付」：每次 push/PR 自动跑三项目测试与规范治理；打 `v*` 标签构建镜像并推送到 GHCR |
+| `proposal.md` §2.2 | 新增排除项：**不做自动化部署**（交付到"镜像已发布"为止） |
+| `proposal.md` §3.1/§3.2/§3.3 | 新增 8 条验收标准：测试红则不构建不推送、tag 含 7 位 sha 与版本号并输出 digest、非 root 且不含凭据、流水线不触网不发信、10 分钟内跑完、容器内无 `.git` 时工程进展降级、登录失败与推送被拒可分 |
+| `proposal.md` §4 | 术语表补「持续集成 / 持续交付 / 镜像与 digest」三行 |
+| `design.md` §7 | 新增整节：阶段划分与触发条件、镜像结构与 `.dockerignore` 口径、容器内工程进展降级、可追溯性与回滚、凭据边界、与展示层的关系 |
+| `tasks.md` | 新增 Task 14（任务总数 13 → 14），验收标准 +12 条 |
+| `.github/workflows/workspace-ci.yml` | 加固：依赖硬失败（去掉"失败也继续"的兜底）、`-o addopts=""`、junit 报告成 artifact、`concurrency` 取消旧运行、`permissions: contents: read`、补 `sdd_agents guard`、加镜像布局静态校验 |
+| `.github/workflows/release-image.yml` | 新增：`test` → `build`（`needs: test`）→ `publish`（`needs: build`），推送 GHCR，打 `sha-<7 位>` / `vX.Y.Z` / `latest` 三种 tag，输出 digest |
+| `Dockerfile` | 多阶段（builder / runtime）+ 非 root（uid 10001）+ `HEALTHCHECK`（镜像自检，不依赖挂载配置）+ `/app/data` 属主交给 `app` |
+| `.dockerignore` | 新增：排除 `.git`、`data/`、`.env`、`config*.yaml`、测试与缓存 |
+| `scripts/verify_dockerfile.py` | 扩到五项静态校验：多阶段、非 root、`HEALTHCHECK`、不跑 `--serve`、`.dockerignore` 挡住凭据 |
+| `tests/test_workflows.py` | 新增 15 条：触发条件、`needs` 链、不含失败兜底、junit、权限、GHCR 与 sha 标签、digest、镜像名强制小写 |
+| `tests/test_dockerfile.py` | 7 → 13 条：补多阶段 / 非 root / `HEALTHCHECK` / 不跑 `--serve` / `.dockerignore` / 运行期不装 pytest |
+
+**触发**：课程主题转到 CI/CD，要求"提交后自动测试、通过后打包镜像、推到镜像仓库"，并明确"先不要部署和收尾"。
+
+**为什么测试与构建必须分成两个 job**：放在一个 job 里跑完所有事，测试红了镜像照样已经推上去了。拆开并显式 `needs`，才能让"测试不过就不产出制品"成为机制，而不是靠人记得。
+
+**为什么到 GHCR 就算完**：镜像推送到仓库后已经是"随时可部署"的制品 —— 这正是 Continuous Delivery 的终点。自动上生产（Continuous Deployment）要先有目标机器，本期明确排除，不写成"以后再说"。
+
+**一键复现**：`python scripts/verify_dockerfile.py`（本机无 Docker 也能校验镜像布局）；`python -m pytest tests/test_workflows.py -q`（流水线结构断言）。
 
 ## 工程化配套（第 3、8、9 章）
 

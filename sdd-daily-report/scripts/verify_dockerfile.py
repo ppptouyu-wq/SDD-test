@@ -1,12 +1,16 @@
-"""Dockerfile 校验：在没有容器运行时的情况下，验证镜像布局是否可用。
+"""Dockerfile 与流水线的静态校验：在没有容器运行时的情况下，验证镜像布局是否可用。
 
 背景：本机没有 docker/podman，镜像从未构建过。为了不让 Dockerfile 变成
 "写了但没人验证"的摆设，这里做两件事：
 
   1. 静态校验：解析 Dockerfile 的 COPY 指令，确认每个源路径真实存在；
-     确认 ENTRYPOINT/CMD 指向的文件在镜像内可达。
+     确认 ENTRYPOINT/CMD 指向的文件在镜像内可达；确认 v1.12 的四条硬约束
+     （多阶段、非 root、HEALTHCHECK、不跑 --serve）。
   2. 动态校验：按 COPY 清单把文件复制到临时目录，**在该目录内**用与镜像
      相同的命令跑一次 `main.py --mock`，验证 import 能解析、入口能跑通。
+
+另外校验 `.dockerignore` 是否真的挡住了凭据与本地数据（design.md §7.2）——
+镜像"没有凭据"这件事不能靠自觉，得有检查守着。
 
 用法：
     python scripts/verify_dockerfile.py
@@ -24,6 +28,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCKERFILE = ROOT / "Dockerfile"
+DOCKERIGNORE = ROOT / ".dockerignore"
 
 # 镜像内有意义、应当存在的路径（缺失即视为布局缺陷）
 REQUIRED_IN_IMAGE = [
@@ -42,11 +47,20 @@ REQUIRED_IN_IMAGE = [
     "CLAUDE.md",
 ]
 
-COPY_RE = re.compile(r"^COPY\s+(?:--\S+\s+)*(?P<srcs>.+?)\s+(?P<dest>\S+)\s*$")
+# 绝不允许出现在构建上下文里的路径（凭据与本地数据）
+FORBIDDEN_IN_CONTEXT = [
+    ".env",
+    "config.yaml",
+    "data",
+    ".git",
+]
+
+COPY_RE = re.compile(r"^COPY\s+(?P<flags>(?:--\S+\s+)*)(?P<srcs>.+?)\s+(?P<dest>\S+)\s*$")
 
 
-def parse_copies(text: str) -> list[tuple[list[str], str]]:
-    copies: list[tuple[list[str], str]] = []
+def parse_copies(text: str) -> list[tuple[list[str], str, str | None]]:
+    """解析 COPY 指令，返回 [(源路径列表, 目标, --from 指定的阶段或 None), …]。"""
+    copies: list[tuple[list[str], str, str | None]] = []
     for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
@@ -54,9 +68,16 @@ def parse_copies(text: str) -> list[tuple[list[str], str]]:
         m = COPY_RE.match(line)
         if not m:
             continue
+        flags = m.group("flags") or ""
+        from_match = re.search(r"--from=(\S+)", flags)
+        stage = from_match.group(1) if from_match else None
         srcs = [s for s in m.group("srcs").split() if not s.startswith("--")]
-        copies.append((srcs, m.group("dest")))
+        copies.append((srcs, m.group("dest"), stage))
     return copies
+
+
+def _from_stages(text: str) -> list[str]:
+    return re.findall(r"^FROM\s+\S+(?:\s+AS\s+(\S+))?", text, flags=re.MULTILINE | re.I)
 
 
 def check_static() -> list[str]:
@@ -70,8 +91,10 @@ def check_static() -> list[str]:
     if not copies:
         problems.append("Dockerfile 里没有解析到任何 COPY 指令")
 
-    # 1) COPY 源路径必须真实存在
-    for srcs, dest in copies:
+    # 1) COPY 源路径必须真实存在（从别的构建阶段搬过来的除外）
+    for srcs, dest, stage in copies:
+        if stage is not None:
+            continue
         for src in srcs:
             if src in (".", "./"):
                 continue
@@ -79,7 +102,7 @@ def check_static() -> list[str]:
                 problems.append(f"COPY 源不存在：{src}（目标 {dest}）")
 
     # 2) 必需文件必须被 COPY 进镜像
-    declared = {s.rstrip("/") for srcs, _ in copies for s in srcs}
+    declared = {s.rstrip("/") for srcs, _, _ in copies for s in srcs}
     for required in REQUIRED_IN_IMAGE:
         top = required.split("/")[0]
         # 文件被显式 COPY，或其所在目录被整体 COPY
@@ -107,6 +130,58 @@ def check_static() -> list[str]:
                             problems.append(
                                 f"CMD 使用 {cfg}，但镜像内只有 {cfg}.example 且未声明挂载方式"
                             )
+
+    # 4) v1.12 四条硬约束（design.md §7.2、§7.6）
+    stages = [s for s in _from_stages(text) if s]
+    if len(re.findall(r"^FROM\s", text, flags=re.MULTILINE | re.I)) < 2:
+        problems.append("镜像不是多阶段构建：v1.12 要求 builder/runtime 两段（design.md §7.2）")
+    if stages and not any(re.search(rf"--from={re.escape(s)}", text) for s in stages):
+        problems.append("多阶段构建但没有从 builder 阶段搬运产物（缺少 COPY --from=…）")
+
+    user_lines = re.findall(r"^USER\s+(\S+)", text, flags=re.MULTILINE | re.I)
+    if not user_lines:
+        problems.append("缺少 USER 指令：镜像会以 root 运行（design.md §7.2）")
+    elif any(u.strip() in ("root", "0", "0:0") for u in user_lines):
+        problems.append("USER 是 root：必须以非 root 用户运行（design.md §7.2）")
+
+    if not re.search(r"^HEALTHCHECK\b", text, flags=re.MULTILINE | re.I):
+        problems.append("缺少 HEALTHCHECK：容器状态无法被 docker ps 观测（design.md §7.2）")
+
+    if "--serve" in text:
+        problems.append(
+            "Dockerfile 出现 --serve：展示层只监听回环地址，不进入容器（design.md §7.6）"
+        )
+
+    # 5) .dockerignore 必须挡住凭据与本地数据
+    problems.extend(check_dockerignore())
+    return problems
+
+
+def check_dockerignore() -> list[str]:
+    """`.dockerignore` 是否真的排除了凭据与本地数据。"""
+    problems: list[str] = []
+    if not DOCKERIGNORE.exists():
+        return [f"缺少 {DOCKERIGNORE.name}：构建上下文会把 .env / data/ 一起送进镜像"]
+
+    patterns = [
+        line.strip()
+        for line in DOCKERIGNORE.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    for forbidden in FORBIDDEN_IN_CONTEXT:
+        # 模式按"去尾斜杠后前缀匹配"判断：`data/` 覆盖 `data`，`.env.*` 覆盖 `.env`
+        covered = any(
+            forbidden == pattern.rstrip("/")
+            or forbidden.startswith(pattern.rstrip("/") + "/")
+            or (pattern.endswith("*") and forbidden.startswith(pattern[:-1]))
+            for pattern in patterns
+        )
+        if not covered:
+            problems.append(f".dockerignore 没有排除 {forbidden}（凭据/本地数据不许进镜像）")
+
+    # config.yaml.example 是部署模板，必须留在上下文里
+    if "config.yaml.example" in patterns:
+        problems.append(".dockerignore 排除了 config.yaml.example：镜像里就没有配置模板了")
     return problems
 
 
@@ -120,7 +195,10 @@ def check_dynamic() -> tuple[bool, str]:
     staging.mkdir(parents=True)
 
     try:
-        for srcs, dest in copies:
+        for srcs, dest, stage in copies:
+            # 从 builder 阶段搬过来的依赖目录不在本机存在，跳过（本地校验用宿主 Python）
+            if stage is not None:
+                continue
             for src in srcs:
                 source = ROOT / src
                 if not source.exists():
@@ -199,6 +277,8 @@ def main() -> int:
             print(f"  ✗ {p}")
     else:
         print("  ✓ COPY 源全部存在，必需文件齐备，ENTRYPOINT/CMD 可达")
+        print("  ✓ 多阶段 / 非 root / HEALTHCHECK / 无 --serve 四项硬约束满足")
+        print("  ✓ .dockerignore 已排除凭据与本地数据")
 
     print()
     print("=" * 66)

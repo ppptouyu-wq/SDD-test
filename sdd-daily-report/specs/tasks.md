@@ -2,10 +2,10 @@
 
 ## 元信息
 - 关联规范: specs/proposal.md、specs/design.md
-- 任务总数: 13
-- 预计总执行时间: 4到5h（包含测试）
+- 任务总数: 14
+- 预计总执行时间: 5到6h（包含测试）
 - 执行策略: 按依赖关系顺序执行，独立任务可并行执行
-- 迭代记录: v1.1 新增 Task 11 并修改 Task 6/Task 10；v1.2 新增 Task 12；v1.3 补齐 Task 11 的成员名单接线（修改 Task 6/Task 9/Task 11）；v1.4 取消默认的非工作日跳过，改为显式 `--working-days-only`（修改 Task 9）；v1.5 收紧提交信息在日报里的呈现（修改 Task 6）；v1.5.1 修复提交条目在 HTML 里拍平、看串的呈现缺陷（修改 Task 6）；v1.6 邮件日报改为卡片式可视化版式（修改 Task 6/Task 7）；v1.7 邮件版式换色与结构微调（起点在 design.md §6.7，未改任务的验收标准）；v1.8 新增 Task 13（工程进展采集与邮件板块），并把邮件主题改为可配置模板（修改 Task 7）；v1.8.1 修复变更起点判定在「项目嵌在子目录」布局下失效；v1.8.2 修复飞书消息时间静默退化成采集时刻（起点在代码，未改任务）；v1.8.3 「协作沟通」只收真人发言、显式排除应用自身消息（修改 Task 5）；v1.8.4 修复考勤解析读错响应键名导致真实打卡被静默丢成「今日无记录」（修改 Task 11）；v1.9 邮件「今日概览」下增一行当日代码变更行数汇总（修改 Task 7）；v1.10 空态分板块说清、工程进展在无提交日给出最近一次提交日期（修改 Task 6/Task 7/Task 13）；v1.11 邮件正文标题区与邮件主题同源（主题去掉中间的 `+` 改为直连，修改 Task 7）
+- 迭代记录: v1.1 新增 Task 11 并修改 Task 6/Task 10；v1.2 新增 Task 12；v1.3 补齐 Task 11 的成员名单接线（修改 Task 6/Task 9/Task 11）；v1.4 取消默认的非工作日跳过，改为显式 `--working-days-only`（修改 Task 9）；v1.5 收紧提交信息在日报里的呈现（修改 Task 6）；v1.5.1 修复提交条目在 HTML 里拍平、看串的呈现缺陷（修改 Task 6）；v1.6 邮件日报改为卡片式可视化版式（修改 Task 6/Task 7）；v1.7 邮件版式换色与结构微调（起点在 design.md §6.7，未改任务的验收标准）；v1.8 新增 Task 13（工程进展采集与邮件板块），并把邮件主题改为可配置模板（修改 Task 7）；v1.8.1 修复变更起点判定在「项目嵌在子目录」布局下失效；v1.8.2 修复飞书消息时间静默退化成采集时刻（起点在代码，未改任务）；v1.8.3 「协作沟通」只收真人发言、显式排除应用自身消息（修改 Task 5）；v1.8.4 修复考勤解析读错响应键名导致真实打卡被静默丢成「今日无记录」（修改 Task 11）；v1.9 邮件「今日概览」下增一行当日代码变更行数汇总（修改 Task 7）；v1.10 空态分板块说清、工程进展在无提交日给出最近一次提交日期（修改 Task 6/Task 7/Task 13）；v1.11 邮件正文标题区与邮件主题同源（主题去掉中间的 `+` 改为直连，修改 Task 7）；v1.12 新增 Task 14（CI/CD 流水线与镜像交付：测试门禁、多阶段镜像、GHCR 发布）
 
 ---
 
@@ -388,6 +388,46 @@
 
 ---
 
+## Task 14: 实现 CI/CD 流水线与镜像交付（新增 v1.12）
+
+描述: 把"提交 → 自动测试 → 构建镜像 → 发布到镜像仓库"接成一条可复现的流水线：
+测试阶段分别跑三个项目与规范治理四件事并产出 junit 报告；构建阶段用多阶段 Dockerfile
+产出非 root、不含凭据的镜像；发布阶段在打 `v*` 标签时把镜像推送到 GHCR 并输出 digest。
+**不含自动部署**（proposal.md §2.2）。
+
+输入:
+  design.md §7.1（阶段划分与触发条件、为什么测试与构建必须分段）
+  design.md §7.2（镜像结构与 .dockerignore 口径、非 root、HEALTHCHECK、不常驻）
+  design.md §7.3（容器内无 `.git` 时工程进展的降级边界）
+  design.md §7.4（标签与 digest、回滚口径）
+  design.md §7.5（凭据边界：只用 GITHUB_TOKEN，最小权限）
+  proposal.md §3.1 v1.12 五条、§3.2 一条、§3.3 两条、§2.2「不做自动化部署」
+输出:
+  .github/workflows/workspace-ci.yml（加固：显式装依赖、`-o addopts=""`、pip 缓存、
+    junit artifact、concurrency、最小权限、补 `sdd_agents guard`）
+  .github/workflows/release-image.yml（tag 触发 → buildx → GHCR → digest）
+  sdd-daily-report/Dockerfile（多阶段 + 非 root + HEALTHCHECK）
+  sdd-daily-report/.dockerignore
+  scripts/verify_dockerfile.py（扩到能校验多阶段与非 root）
+  tests/test_dockerfile.py（同步扩测试）
+依赖: Task 1（项目结构）、Task 9（编排入口与 `--check` 健康检查）
+
+验收标准:
+- [ ] `workspace-ci.yml` 在 push 与 PR 上触发，三个项目用矩阵分别跑 pytest；测试命令带 `-o addopts=""`，能被解析出 "N passed" 汇总行（proposal.md §3.1 v1.12、§3.2）
+- [ ] CI 中依赖**显式安装**（httpx/PyYAML/Jinja2/pytest），不再用 `|| true` 兜底吞掉安装失败（design.md §7.1）
+- [ ] 测试结果以 `junit` XML 作为 artifact 上传；工作流顶层 `permissions: contents: read`，`concurrency` 取消同分支的重复运行（§7.1、§7.5）
+- [ ] 规范治理在 CI 中至少包含 `generate_tool_configs.py --check`、`sdd_agents review`、`sdd_agents team`、`sdd_agents guard`、`sdd_agents metrics`（§7.1）
+- [ ] `release-image.yml` 只在 `push` 到 `main` 或打 `v*` 标签时构建，且构建 job 显式 `needs` 测试 job —— 测试红时不产出镜像（§7.1、proposal.md §3.1 v1.12）
+- [ ] 镜像推送到 `ghcr.io`，标签至少含 `sha-<7 位>` 与 `vX.Y.Z`，并输出 `digest`（§7.4）
+- [ ] 镜像内以**非 root 用户**运行；`.dockerignore` 排除 `.git`、`.github`、`tests`、`data`、`.env`、`config*.yaml`（§7.2、proposal.md §3.1 v1.12）
+- [ ] `HEALTHCHECK` 调用 `python main.py --check`；`ENTRYPOINT`/`CMD` 保持"一次执行即退出"，镜像内不跑 `--serve`（§7.2、§7.6）
+- [ ] 流水线只跑不触网的演示模式，不向真实飞书群或邮箱发信；日志不出现明文密钥（§7.5）
+- [ ] 镜像仓库登录失败与推送被拒在日志里可区分，不静默跳过发布（proposal.md §3.3 v1.12）
+- [ ] 容器内无 `.git` 时 `progress=None`、邮件渲染「今日未记录工程进展」，不影响其余板块（§7.3、proposal.md §3.3 v1.12）
+- [ ] `scripts/verify_dockerfile.py` 与 `tests/test_dockerfile.py` 覆盖多阶段、非 root、HEALTHCHECK、`.dockerignore` 四项，本地无 Docker 也能校验（§7.2）
+
+---
+
 ## 执行顺序与依赖关系
 
 ```
@@ -411,6 +451,9 @@ Task 1 ──▶ Task 2 ──┬──▶ Task 3  ┐
 - v1.8 增量路径：Task 2 → Task 13 → Task 7（工程进展进入邮件版式）
   —— Task 13 是本机旁路采集，不依赖 GitHub/飞书可用性，因此**不在关键路径上**，
   但它是 v1.8 邮件第 4 段的唯一数据来源，故 Task 7 的版式变更必须排在它之后。
+- v1.12 增量路径：Task 1 → Task 14（流水线与镜像交付）
+  —— Task 14 只读仓库内容、只在 CI 上执行，**不改变运行时行为**，因此不阻塞其他任务；
+  但它依赖"项目结构与 `--check` 健康检查"已经存在，故排在 Task 1/Task 9 之后。
 
 ## 任务粒度自评（对应 §6.2）
 
@@ -422,5 +465,6 @@ Task 1 ──▶ Task 2 ──┬──▶ Task 3  ┐
 | Task 9 | ~100 行 | 是（集成测试） | 合适 |
 | Task 12 | ~200 行（含静态页面） | 是（临时 SQLite 库 + 视图模型断言） | 合适（略偏上沿，故逻辑与 HTTP 壳分离） |
 | Task 13 | ~150 行 | 是（临时 Git 仓库 + 注入覆盖率取数） | 合适 |
+| Task 14 | ~120 行（两个 workflow + Dockerfile + `.dockerignore` + 校验脚本） | 是（静态校验覆盖多阶段/非 root/HEALTHCHECK；真实构建由 Actions 承担） | 合适 |
 
 均落在"50~200 行 / 产出可测试交付物"的最佳区间内。

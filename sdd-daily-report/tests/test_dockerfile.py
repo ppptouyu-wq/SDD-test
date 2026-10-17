@@ -74,3 +74,60 @@ def test_verify_dockerfile_script_passes():
     output = (result.stdout or "") + (result.stderr or "")
     assert result.returncode == 0, f"Dockerfile 校验未通过：\n{output}"
     assert "校验通过" in output
+
+
+# ---------------------------------------------------------------------------
+# v1.12：镜像质量的四条硬约束（specs/design.md §7.2）
+# ---------------------------------------------------------------------------
+
+
+def test_dockerfile_is_multi_stage(dockerfile_text):
+    """多阶段构建：依赖装在 builder 里，runtime 只搬运产物。"""
+    from_lines = [
+        line.strip() for line in dockerfile_text.splitlines()
+        if line.strip().upper().startswith("FROM ")
+    ]
+    assert len(from_lines) >= 2, "v1.12 要求 builder / runtime 两段"
+    assert "--from=" in dockerfile_text, "没有从 builder 阶段 COPY 产物，分阶段就没意义"
+
+
+def test_dockerfile_runs_as_non_root(dockerfile_text):
+    """容器内进程不得以 uid 0 运行。"""
+    user_lines = [
+        line.strip() for line in dockerfile_text.splitlines()
+        if line.strip().upper().startswith("USER ")
+    ]
+    assert user_lines, "缺少 USER 指令：镜像会以 root 运行"
+    names = {line.split(maxsplit=1)[1].strip() for line in user_lines}
+    assert not (names & {"root", "0", "0:0"}), f"USER 是 root：{names}"
+
+
+def test_dockerfile_declares_healthcheck(dockerfile_text):
+    """容器状态要能被 docker ps 观测；且健康检查不依赖外部配置。"""
+    assert "HEALTHCHECK" in dockerfile_text
+    healthcheck = dockerfile_text.split("HEALTHCHECK", 1)[1]
+    assert "import main" in healthcheck, "健康检查应做镜像自检（模块可 import）"
+
+
+def test_dockerfile_never_starts_the_viewer(dockerfile_text):
+    """展示层只监听回环地址，不进入容器（design.md §7.6）。"""
+    assert "--serve" not in dockerfile_text
+
+
+def test_dockerignore_excludes_credentials_and_local_data():
+    """.dockerignore 必须挡住凭据与本地数据；配置模板要留下。"""
+    patterns = [
+        line.strip()
+        for line in (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    for forbidden in (".env", "config.yaml", "data/", ".git"):
+        assert forbidden in patterns, f".dockerignore 没有排除 {forbidden}"
+    assert "config.yaml.example" not in patterns, "配置模板不能被排除"
+
+
+def test_runtime_stage_installs_runtime_dependencies_only(dockerfile_text):
+    """运行镜像里不该出现 pytest：测试依赖属于 dev extra。"""
+    builder, runtime = dockerfile_text.split("FROM python:3.11-slim AS runtime", 1)
+    assert "httpx" in builder and "PyYAML" in builder and "Jinja2" in builder
+    assert "pytest" not in runtime, "runtime 阶段不该装测试依赖"

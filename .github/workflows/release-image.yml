@@ -1,0 +1,163 @@
+name: release-image
+
+# 发布流水线：测试 → 构建 → 发布到 GHCR（specs/design.md §7.1 阶段 ②③）。
+#
+# 关键设计（为什么这么拆）：
+#   1. `build` 显式 `needs: test`：测试红了就**不产出镜像**。这是"测试不过不发版"
+#      从纪律变成机制的唯一办法 —— 一个 job 里跑完所有事，测试红了镜像照样已经推上去了。
+#   2. 发布 job 自己再跑一遍测试，而不是等 workspace-ci 的结论：另一个工作流的结论
+#      可能是几小时前的，发布时刻必须自己验证一次。
+#   3. 登录与推送分成两步：失败时日志能直接看出是"登录失败"还是"推送被拒"
+#      （proposal.md §3.3 v1.12）。
+#   4. 只用 `GITHUB_TOKEN`，权限收敛到 packages: write + contents: read，
+#      不引入任何长期 PAT（§7.5）。
+#
+# 不做的事：**不部署**。"把镜像拉到某台机器上跑起来"是部署动作，本期明确排除
+# （proposal.md §2.2）。到"镜像已发布、digest 已打印"为止，即 Continuous Delivery 的终点。
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONIOENCODING: utf-8
+  PROJECT: sdd-daily-report
+
+jobs:
+  test:
+    name: 测试门禁
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        project:
+          - sdd-daily-report
+          - kb-search
+          - brownfield-demo
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: ${{ matrix.project }}/pyproject.toml
+
+      - name: 安装依赖
+        working-directory: ${{ matrix.project }}
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: 运行测试
+        working-directory: ${{ matrix.project }}
+        run: python -m pytest -o addopts="" -q
+
+  build:
+    name: 构建镜像
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 计算镜像名与标签
+        run: |
+          set -eu
+          # 坑：镜像仓库要求全小写，而仓库名是 SDD-test —— 直接用 github.repository
+          # 会得到 "invalid reference format"。这里强制转小写。
+          IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          SHORT_SHA="$(echo '${{ github.sha }}' | cut -c1-7)"
+          # 提交哈希标签：不可变，回滚就靠它
+          TAGS="${IMAGE}:sha-${SHORT_SHA}"
+          # 版本标签：v1.12.0 → :v1.12.0
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAGS="${TAGS} ${IMAGE}:${GITHUB_REF#refs/tags/}"
+          fi
+          # latest：只在主干上给，避免 tag 分支把 latest 抢走
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            TAGS="${TAGS} ${IMAGE}:latest"
+          fi
+          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
+          echo "SHORT_SHA=${SHORT_SHA}" >> "$GITHUB_ENV"
+          echo "TAGS=${TAGS}" >> "$GITHUB_ENV"
+          echo "本次将产出：${TAGS}"
+
+      - name: docker build
+        run: |
+          set -eu
+          docker build -t "${IMAGE}:sha-${SHORT_SHA}" "${PROJECT}"
+
+      - name: 镜像冒烟（--mock，不触网、不发信）
+        run: |
+          set -eu
+          # 用镜像自带的配置模板跑一次演示模式：验证镜像里代码、依赖、
+          # 数据目录权限都是对的。--mock 不发任何真实请求（§7.5）。
+          docker run --rm "${IMAGE}:sha-${SHORT_SHA}" \
+            --config config.yaml.example --mock --date 2026-08-20
+
+  publish:
+    name: 推送到 GHCR
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 计算镜像名与标签
+        run: |
+          set -eu
+          IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          SHORT_SHA="$(echo '${{ github.sha }}' | cut -c1-7)"
+          TAGS="${IMAGE}:sha-${SHORT_SHA}"
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAGS="${TAGS} ${IMAGE}:${GITHUB_REF#refs/tags/}"
+          fi
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            TAGS="${TAGS} ${IMAGE}:latest"
+          fi
+          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
+          echo "SHORT_SHA=${SHORT_SHA}" >> "$GITHUB_ENV"
+          echo "TAGS=${TAGS}" >> "$GITHUB_ENV"
+
+      # 登录与推送分开两步：失败时能一眼看出是"登录失败"还是"推送被拒"
+      - name: docker login ghcr.io
+        run: |
+          set -eu
+          echo '${{ secrets.GITHUB_TOKEN }}' \
+            | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+
+      - name: docker build 并 push 到 GHCR
+        id: push
+        run: |
+          set -eu
+          docker build -t "${IMAGE}:sha-${SHORT_SHA}" "${PROJECT}"
+          for tag in ${TAGS}; do
+            docker tag "${IMAGE}:sha-${SHORT_SHA}" "${tag}"
+            docker push "${tag}"
+          done
+          # digest 是镜像内容的唯一指纹；部署与回滚都应锁定它而不是 latest（§7.4）
+          DIGEST="$(docker inspect --format '{{index .RepoDigests 0}}' "${IMAGE}:sha-${SHORT_SHA}")"
+          echo "IMAGE=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "DIGEST=${DIGEST}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### 镜像已发布"
+            echo ""
+            echo "| 项目 | 值 |"
+            echo "|---|---|"
+            echo "| digest | \`${DIGEST}\` |"
+            for tag in ${TAGS}; do echo "| tag | \`${tag}\` |"; done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 打印回滚口径
+        run: |
+          echo "回滚：把部署侧的镜像引用指回上一个 sha 标签即可，不需要重新构建。"
+          echo "例如：${IMAGE}:sha-<上一个提交的前 7 位>"

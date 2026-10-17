@@ -749,3 +749,79 @@ v1.8 在"今日总结"之后插入团队级的"今日工程进展"）：
 **(4) 空态**：`progress is None` → 中性块「今日未记录工程进展」+ WARNING 日志，
 不写成"采集失败"（本机没有 Git 仓库不是故障），也不参与 `sources` 四态（§3.4）。
 
+## 7. 构建与交付流水线（v1.12 需求变更新增）
+
+**触发**：课程主题转为 CI/CD，要求"提交后自动测试、通过后打包镜像、推送到镜像仓库"。
+本节把这个能力写成可执行的阶段划分与边界，避免流水线长成"谁都能往里塞一步"的样子。
+
+### 7.1 阶段划分与触发条件
+
+| 阶段 | 触发条件 | 执行内容 | 产出 | 失败后果 |
+|---|---|---|---|---|
+| ① 测试（CI） | 每次 `push`、每个 `pull_request` | 三个项目各自独立跑 pytest（矩阵）；规范治理四件事：多工具配置同步、`sdd_agents review`、`sdd_agents team`、`sdd_agents guard`/`metrics` | 红/绿结论 + `junit` 报告（artifact） | **流水线终止**，不进入构建 |
+| ② 构建 | 仅 `push` 到 `main` 或打 `v*` 标签，且 ① 为绿 | `docker build`（多阶段，见 §7.2） | 本地镜像 + 构建日志 | 终止，不推送 |
+| ③ 发布 | 仅打 `v*` 标签，且 ② 成功 | `docker login ghcr.io` → `docker push`，打三种标签（§7.4） | GHCR 中的镜像 + digest | 终止，并在日志里区分"登录失败"与"推送被拒" |
+| ④ 部署 | **本期不做**（`proposal.md` §2.2） | — | — | — |
+
+**为什么测试与构建必须分段而不是一个 job**：一个 job 里跑完所有事，测试红了照样已经把镜像
+构出来并推上去了。分成两个 job 并让 ② 显式 `needs: ①`，才能让"测试不过就不产出制品"这条
+验收标准（`proposal.md` §3.1 v1.12）成为**机制**而不是纪律。
+
+**为什么不需要 ⑤ 部署**：镜像推到仓库后，它已经是"随时可部署"的制品 —— 这正是
+Continuous **Delivery** 的终点。是否自动上生产（Continuous Deployment）取决于有没有目标机器，
+本项目没有，因此明确排除，不写成"以后再说"的含糊话。
+
+### 7.2 镜像结构与 `.dockerignore` 口径
+
+镜像采用**多阶段构建**：builder 阶段装依赖到独立目录，runtime 阶段只拷贝
+"依赖 + 代码 + 规范"，不带编译器缓存与构建痕迹。
+
+| 进镜像 | 不进镜像（`.dockerignore`） |
+|---|---|
+| `shared/`、`collector/`、`generator/`、`notifier/`、`main.py` | `.git/`（见 §7.3 的降级口径）、`.github/` |
+| `specs/`（护栏运行期需要读，见 `Dockerfile` 注释） | `tests/`、`_build_scripts/`、`_shots/`、`pages/` |
+| `scripts/`、`CLAUDE.md`、`.claude/` | `data/`（本地 SQLite 与日报历史）、`.env` |
+| `config.yaml.example`（模板，不含真实值） | `config*.yaml`（真实配置由部署方挂载） |
+
+- **非 root 运行**：镜像内创建普通用户并以它启动，避免容器内进程以 uid 0 运行。
+- **`HEALTHCHECK`**：做镜像自检 —— 导入采集/生成/推送/共享四层模块与编排入口
+  （`python -c "import main, shared.models, collector.github, generator.template, notifier.email"`），
+  容器状态可被 `docker ps` 观测。刻意**不依赖外部配置**：镜像里没有 `config.yaml`，
+  而 `main.py --check` 需要挂载配置后才成立，用它做健康检查会在"尚未挂载配置"的部署阶段
+  永远报 unhealthy，把真实故障和"还没配好"混为一谈。
+- **首次部署先自检**：`docker run --rm … <image> --check`（此时配置已挂载），比健康检查更严。
+- **不常驻**：`ENTRYPOINT ["python", "main.py"]`，一次执行即退出（`proposal.md` §2.3 的
+  "基于 Cron 的定时任务，不需要常驻后台服务"），因此**不使用** `webview --serve`。
+
+### 7.3 容器内的"工程进展"降级（重要边界）
+
+`collector/repo_progress.py` 依赖**本机 Git 历史**（§3.4）。镜像里刻意**不包含** `.git`
+（一个仓库的历史动辄几十 MB，且会把提交者邮箱等信息带进制品），因此容器内跑日报时：
+
+- `find_repo_root()` / `git log` 失败 → `progress=None` → 邮件渲染中性空态
+  「今日未记录工程进展」，**不报错、不影响其他板块与推送**（`proposal.md` §3.3 v1.12）；
+- 想要容器里也有这一板块，唯一被允许的做法是部署时把 `.git` **只读挂载**进去
+  （`-v $(pwd)/.git:/app/.git:ro`），本项目不为它增加任何配置项或网络取数逻辑 ——
+  那会把"工程数据源"变成外部依赖，破坏 §3.4 "它不是数据源"的判定。
+
+### 7.4 可追溯性与回滚
+
+- 镜像标签：`sha-<commit 前 7 位>`（不可变，用于回滚）、`vX.Y.Z`（版本语义）、`latest`（便于手拉）；
+- 每次推送输出 `digest`（`sha256:…`），部署时应锁定 digest；
+- **回滚 = 用上一个 `sha-*` 重新拉起**，不需要重新构建。
+
+### 7.5 凭据边界
+
+- 流水线里**只用** `GITHUB_TOKEN`（工作流自动注入）推送镜像，权限收敛到
+  `packages: write` + `contents: read`；不引入任何长期 PAT。
+- 真实运行凭据（`GITHUB_TOKEN` 采集用、`LARK_APP_ID/SECRET`、`SMTP_PASSWORD`）一律走
+  Secrets 或部署侧的 `--env-file`，**不进镜像、不进仓库、不 `echo`**。
+- CI 中的端到端验证只跑时不连接任何外部服务的演示模式，不向真实群或邮箱发信
+  （`proposal.md` §3.1 v1.12）。
+
+### 7.6 与展示层的关系
+
+展示层（v1.2）只监听 `127.0.0.1`（§6.5），**不进入容器**：容器里跑 `--serve` 对外没有意义，
+放开监听又会违反 §6.5 的硬约束。展示页仍是"本机按需启动、用完即关"的工具。
+
+

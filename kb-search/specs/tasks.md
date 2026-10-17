@@ -108,3 +108,22 @@ Task 1 ──┬──▶ Task 2 ──┐
 
 - **关键路径**：Task 1 → Task 3 → Task 4 → Task 5
 - **最大并行度**：2（Task 2 与 Task 3 可同时执行）
+
+---
+
+## 缺陷修复记录
+
+### v1.0.1（2026-10-17）：测试依赖漏声明，CI 在收集阶段就中断
+
+- **症状**：GitHub Actions 的 `test / kb-search` 作业每次都以 `Process completed with exit code 2`
+  失败，而本地 `python -m pytest` 一直 109 passed / 1 skipped。
+- **根因**：`tests/test_contracts.py` 第 14 行 `import yaml`，但 `pyproject.toml` 的 `dev` 附加依赖
+  只有 `pytest` —— PyYAML 从来没被声明过。本地机器（Anaconda）碰巧装了 PyYAML，所以这个缺陷
+  在本地永远是绿的；干净环境里 `import yaml` 抛 `ModuleNotFoundError`，pytest 在**收集阶段**
+  中断（退出码 2，不是 1），于是三个用例文件一个都没跑。
+- **修法**：把 `PyYAML>=6.0` 加进 `dev` 附加依赖（**测试依赖，不是运行时依赖**；运行时仍然只有 `httpx`，
+  `proposal.md` §2.3 的依赖口径不变）。
+- **验证口径**：本地阻断 `yaml` 可复现同样的 `Interrupted: 1 error during collection` / 退出码 2；
+  声明后 CI 收集阶段恢复正常。
+- **教训**：只在本地跑绿不算验证过依赖声明 —— 干净环境才是判据。这正是 CI 存在的意义。
+

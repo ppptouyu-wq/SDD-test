@@ -56,9 +56,11 @@ kb-search/
 
 ## 当前状态
 
-- 版本：v1.0（对应书中第 1-2 章的最小完整示例）
+- 版本：v1.0.1（对应书中第 1-2 章的最小完整示例；v1.0.1 修掉「测试依赖漏声明」的缺陷）
 - 任务进度：Task 1 ~ Task 5 全部完成
-- 测试：`python -m pytest` —— 88 通过、1 跳过（跳过的仅是 FastAPI 适配层）
+- 测试：`python -m pytest` —— 109 通过、1 跳过（跳过的仅是 FastAPI 适配层）
+- 依赖口径：运行时只有 `httpx`；`PyYAML` 是**测试依赖**（`tests/test_contracts.py` 读契约 YAML），
+  之前漏声明导致 GitHub Actions 的干净环境里收集阶段就中断，详见 `specs/tasks.md` 的缺陷修复记录
 - 本地演示：`python -m kb_search "接口限流" "发布回滚"`
 
 ## 常用命令

@@ -24,6 +24,11 @@ qdrant = [
 ]
 dev = [
     "pytest>=7.4",
+    # tests/test_contracts.py 要读 specs/contracts/api-spec.yaml 校验契约，
+    # 所以 PyYAML 是**测试依赖**，不是运行时依赖（运行时仍然只有 httpx）。
+    # 之前漏声明：本地机器上碰巧装了 PyYAML，测试一直绿；CI 的干净环境里
+    # import yaml 直接失败，pytest 在收集阶段中断（退出码 2）。
+    "PyYAML>=6.0",
 ]
 
 [tool.hatch.build.targets.wheel]

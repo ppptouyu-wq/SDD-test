@@ -119,8 +119,8 @@ def _wire_all_sources(monkeypatch, config, *, github_ok=True, lark_task_ok=True,
         ])
 
     def attendance_collect(since, until, *, config, employee_type="employee_id",
-                           user_ids=None, client=None, token_manager=None,
-                           sleep=None):  # noqa: ANN001
+                           user_ids=None, working_day=True, client=None,
+                           token_manager=None, sleep=None):  # noqa: ANN001
         from shared.models import AttendanceRecord, CollectResult
 
         if not attendance_ok:

@@ -70,6 +70,8 @@ logger = get_logger("collector.lark_attendance")
 STATUS_MISSING_CHECKOUT = "签退缺失"
 STATUS_MISSING_CHECKIN = "签到缺失"
 STATUS_ABSENT = "缺勤"
+# v1.13：非工作日两侧都没打卡 → 休息日。周末判"缺勤"是把正常休息读成旷工。
+STATUS_REST_DAY = "休息日"
 STATUS_NORMAL = "正常"
 STATUS_LATE = "迟到"
 STATUS_EARLY = "早退"
@@ -85,15 +87,24 @@ def compute_work_hours(check_in: datetime | None, check_out: datetime | None) ->
 
 
 def resolve_status(
-    raw_status: str | None, check_in: datetime | None, check_out: datetime | None
+    raw_status: str | None,
+    check_in: datetime | None,
+    check_out: datetime | None,
+    *,
+    working_day: bool = True,
 ) -> str:
     """按"签到/签退是否齐全"判定状态；齐全时使用接口返回的状态。
 
     判定顺序见 design.md §3.0.1：
-    两者都缺 → 缺勤；缺签到 → 签到缺失；缺签退 → 签退缺失；齐全 → 接口状态或"正常"。
+    非工作日两侧都缺 → 休息日；两者都缺 → 缺勤；缺签到 → 签到缺失；
+    缺签退 → 签退缺失；齐全 → 接口状态或"正常"。
+
+    :param working_day: 当日是否是工作日（由 `main.py` 用 `shared.calendar.is_working_day`
+        算好后传入，采集层不自己读配置）。周末与法定节假日不打卡是常态，
+        判成「缺勤」等于把"正常休息"读成"旷工"（v1.13）。
     """
     if check_in is None and check_out is None:
-        return STATUS_ABSENT
+        return STATUS_REST_DAY if not working_day else STATUS_ABSENT
     if check_in is None:
         return STATUS_MISSING_CHECKIN
     if check_out is None:
@@ -140,6 +151,7 @@ def collect(
     config: LarkConfig,
     employee_type: str = "employee_no",
     user_ids: list[str] | None = None,
+    working_day: bool = True,
     client: httpx.Client | None = None,
     token_manager: LarkTokenManager | None = None,
     sleep: Callable[[float], None] = time.sleep,
@@ -195,7 +207,9 @@ def collect(
                     check_in=check_in,
                     check_out=check_out,
                     work_hours=compute_work_hours(check_in, check_out),
-                    status=resolve_status(raw_status, check_in, check_out),
+                    status=resolve_status(
+                        raw_status, check_in, check_out, working_day=working_day
+                    ),
                 )
             )
 

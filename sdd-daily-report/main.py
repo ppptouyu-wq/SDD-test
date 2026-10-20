@@ -23,7 +23,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 
 from collector import github as github_collector
-from collector import lark_attendance, lark_msg, lark_task, repo_progress
+from collector import lark_attendance, lark_msg, lark_task, pipeline as pipeline_collector, repo_progress
 from generator import formatter, template
 from notifier import email as email_notifier
 from notifier import lark_bot
@@ -153,6 +153,9 @@ def collect_all(
             config=config.lark,
             employee_type=ATTENDANCE_EMPLOYEE_TYPE,
             user_ids=_attendance_user_ids(config),
+            # v1.13：非工作日两侧都没打卡判「休息日」而不是「缺勤」。
+            # 判定所需的节假日表来自配置，采集层不自己读 config（design.md §3.0.1）。
+            working_day=is_working_day(day, config.report.holidays),
         )
         # v1.8：本机仓库的工程进展（唯一不联网的"数据源"）。它失败不影响其他源，
         # 也不进 sources（见 SOURCE_REPO_PROGRESS 的注释）。
@@ -244,6 +247,8 @@ def run(
         config.report.team_name,
         sources=sources,
         progress=_progress_of(results),
+        # v1.13：交付流水线现状（只读仓库文件与 git tag，不联网、不调 Actions API）
+        pipeline=pipeline_collector.collect(config.report.repo_path),
         title=email_title,
     )
 

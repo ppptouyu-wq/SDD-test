@@ -92,6 +92,25 @@ class RepoProgress:
 
 
 @dataclass
+class PipelineStatus:
+    """交付流水线现状（v1.13 新增，团队级；见 specs/design.md §3.5、§6.7(6)）。
+
+    取数只读**仓库里的文件与 Git 事实**：`.github/workflows/*.yml`、`Dockerfile`、`git tag`。
+    刻意不联网、不调 Actions API —— 日报进程手里的令牌没有 `actions:read`
+    （实测打 Actions 日志接口返回 403），所以 `last_run_status` 允许为空。
+    **空 ≠ 失败，也 ≠ 跑通**：取不到就写"未采集"，绝不把"文件都在"说成"流水线已跑通"。
+    """
+
+    ci_workflows: list[str] = field(default_factory=list)  # 工作流文件名（仓库根相对路径）
+    release_to_registry: bool = False  # 是否有工作流把镜像推到镜像仓库（出现 ghcr.io）
+    image_stages: int = 0  # Dockerfile 里 FROM 的个数；多阶段构建 ≥ 2
+    image_nonroot: bool = False  # 是否显式 USER 且不是 root
+    image_healthcheck: bool = False  # 是否有 HEALTHCHECK
+    latest_tag: str = ""  # git tag 里最新的版本标签，如 v1.12.0；无则空串
+    last_run_status: str = ""  # 首跑结论；取不到即空串（渲染成"未采集"）
+
+
+@dataclass
 class DailyReport:
     """每日报告"""
 
@@ -108,6 +127,9 @@ class DailyReport:
     # 当日工程进展（v1.8 新增）。取不到仓库信息时为 None → 邮件渲染中性空态；
     # 刻意不进 sources（design.md §3.4）。
     progress: RepoProgress | None = None
+    # 交付流水线现状（v1.13 新增）。仓库里没有工作流/Dockerfile/标签时为 None
+    # → 邮件渲染「未记录交付流水线」；同样不进 sources（design.md §3.5）。
+    pipeline: PipelineStatus | None = None
 
 
 T = TypeVar("T")

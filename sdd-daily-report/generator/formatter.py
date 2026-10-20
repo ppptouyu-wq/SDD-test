@@ -33,6 +33,7 @@ from shared.models import (
     DailyReport,
     MemberReport,
     MessageRecord,
+    PipelineStatus,
     RepoProgress,
     TaskRecord,
 )
@@ -109,6 +110,7 @@ def generate(
     *,
     sources: dict[str, bool] | None = None,
     progress: RepoProgress | None = None,
+    pipeline: PipelineStatus | None = None,
     title: str = "",
     generated_at: datetime | None = None,
     now: Callable[[], datetime] | None = None,
@@ -118,6 +120,7 @@ def generate(
     :param sources: 各数据源采集是否成功（用于标注"数据获取失败"，
         以及考勤采集失败时的"考勤数据暂不可用"）。
     :param progress: 当日工程进展（v1.8，见 design.md §3.4）；None = 未记录。
+    :param pipeline: 交付流水线现状（v1.13，见 design.md §3.5）；None = 未记录。
     :param title: 邮件标题区的标题（v1.11）。由调用方用 `template.report_title()` 与
         同一份 email 配置渲染，与邮件主题同源；空串时回退到「报告名 + 日期」。
     :raises GeneratorError: 渲染失败。
@@ -162,6 +165,9 @@ def generate(
         # v1.8：当日工程进展（团队级）。None 表示本机取不到仓库信息 ——
         # 邮件渲染中性空态，且**不进 sources**（design.md §3.4）。
         progress=progress,
+        # v1.13：交付流水线现状。None 表示仓库里没有工作流/镜像/标签 ——
+        # 邮件渲染「未记录交付流水线」，同样不进 sources（design.md §3.5）。
+        pipeline=pipeline,
     )
     try:
         report.html = template.render_email_html(report, title=title)

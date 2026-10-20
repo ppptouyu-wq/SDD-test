@@ -53,11 +53,13 @@
 | check_in | datetime \| None | 否 | 签到时间；缺失时为 None |
 | check_out | datetime \| None | 否 | 签退时间；缺失时为 None |
 | work_hours | float | 是 | 工时（小时）= check_out - check_in，保留一位小数；缺任一时刻则为 0 |
-| status | str | 是 | **枚举：正常 / 迟到 / 早退 / 缺勤 / 休假 / 签到缺失 / 签退缺失** |
+| status | str | 是 | **枚举：正常 / 迟到 / 早退 / 缺勤 / 休假 / 签到缺失 / 签退缺失 / 休息日** |
 
 > `status` 的取值受枚举约束：**缺失签退数据时必须为"签退缺失"**（tasks.md Task 11）；
 > **缺失签到但有签退时必须为"签到缺失"**（v1.8.4 新增，真实数据里
 > `check_in_result == "Lack"` 且 `check_in_record` 键不存在）；两者都缺为"缺勤"。
+> **非工作日（双休日/配置的法定节假日）两者都缺时为"休息日"**（v1.13 新增：
+> 把"正常休息"判成"旷工"是语义错误，判定顺序见 `design.md` §3.0.1）。
 > 判定顺序与响应字段映射见 `design.md` §3.0.1。
 > 该枚举在 `api-spec.yaml` 中同样声明，两处不得矛盾。
 > 示例：某人 09:32 签到但无签退记录 → `check_out=None`、`work_hours=0.0`、`status="签退缺失"`。
@@ -73,6 +75,7 @@
 | html | str | 完整的 HTML 格式日报 |
 | sources | dict[str, bool] | 各数据源当日采集成功/失败（v1.2 新增），键为数据源名（`github`/`lark_task`/`lark_msg`/`lark_attendance`），值为是否成功。展示层据此推导 status；**v1.2 之前的历史记录可能为空字典** |
 | progress | RepoProgress \| None | 当日工程进展（v1.8 新增）；取不到仓库信息时为 None。**刻意不写入 sources**：它是本机代码仓库的"工程数据源"（`proposal.md` §4），失败原因多为"这台机器上不是 Git 仓库"，属可解释的缺失，算进四态会把整份日报误打成 `partial` |
+| pipeline | PipelineStatus \| None | 交付流水线现状（v1.13 新增）；仓库里没有工作流/`Dockerfile`/标签时为 None。同样**不写入 sources** |
 
 > `sources` 是"采集失败必须显式标注"（`proposal.md` §3.1）在数据模型上的落点：
 > 只有把每个数据源的成败随日报一起持久化，展示层才能对失败数据源标注"数据获取失败"，
@@ -92,6 +95,20 @@
 
 > 取数原则见 `design.md` §6.8：板块里只允许出现 `git` 与 `metrics` 能直接算出来的数字，
 > 不得出现"测试全部通过"这类需要现场执行才能确认的断言。
+
+### PipelineStatus（交付流水线）— v1.13 新增
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| ci_workflows | list[str] | 是 | `.github/workflows/` 下的工作流文件名（仓库根相对路径），可为空列表 |
+| release_to_registry | bool | 是 | 是否有工作流把镜像推送到镜像仓库（文件里出现 `ghcr.io`） |
+| image_stages | int | 是 | `Dockerfile` 里 `FROM` 的个数；多阶段构建 ≥ 2。没有 Dockerfile 时为 0 |
+| image_nonroot | bool | 是 | 是否显式声明 `USER` 且不是 root |
+| image_healthcheck | bool | 是 | 是否声明 `HEALTHCHECK` |
+| latest_tag | str | 是 | `git tag` 里最新的版本标签（如 `v1.12.0`）；无标签时为空串 |
+| last_run_status | str | 是 | Actions 首跑结论；**允许为空串**（令牌无 `actions:read` 时取不到，渲染成"未采集"）。不得由本地推断填充 |
+
+> 取数口径见 `design.md` §3.5：只读仓库文件与 Git 事实，不联网、不臆测；
+> `last_run_status` 为空是**正常状态**，不等于流水线失败，也不等于跑通。
 
 ## 3. 展示层视图模型（v1.2 迭代新增）
 

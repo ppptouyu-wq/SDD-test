@@ -15,7 +15,7 @@ from datetime import date, datetime
 
 from jinja2 import Template
 
-from shared.models import CommitRecord, DailyReport, MemberReport, RepoProgress
+from shared.models import CommitRecord, DailyReport, MemberReport, PipelineStatus, RepoProgress
 
 NO_RECORD = "今日无记录"
 # 空态文案（v1.10，design.md §6.7(5)）：每个板块说清"空的是什么"。
@@ -582,6 +582,46 @@ CHANGE_LAYER_ORIGIN = {
 SECTION_PROGRESS = "今日工程进展"
 PROGRESS_EMPTY = "今日未记录工程进展"
 
+# 交付流水线板块（v1.13，design.md §3.5 / §6.7(6)）
+SECTION_PIPELINE = "交付流水线"
+PIPELINE_EMPTY = "未记录交付流水线"
+PIPELINE_STAGES = "测试门禁 ──▶ 镜像构建 ──▶ 发布到镜像仓库 ──▶ 部署（本期不做）"
+# 令牌没有 actions:read → 首跑结论取不到。写"未采集"，不写"已跑通"。
+PIPELINE_RUN_UNKNOWN = "未采集（令牌无 actions:read 权限）"
+
+
+def _pipeline_callout(pipeline: PipelineStatus) -> str:
+    """把交付流水线渲染成一条阶段链 + 四行现状（v1.13）。
+
+    **只放能当场复核的事实**：工作流文件名、Dockerfile 的 FROM/USER/HEALTHCHECK、
+    `git tag`。首跑结论取不到时明写"未采集"—— 把"文件都在"说成"流水线已跑通"
+    是这份日报最不能犯的错（proposal.md §3.1 v1.13 第 2 条）。
+    """
+    head = f'<span style="font-weight:700;">{_escape(PIPELINE_STAGES)}</span>'
+
+    details: list[str] = []
+    details.append(
+        "CI 工作流：" + (_escape("、".join(pipeline.ci_workflows)) if pipeline.ci_workflows else "未配置")
+    )
+    if pipeline.image_stages:
+        marks = [
+            f"{pipeline.image_stages} 阶段",
+            "非 root" if pipeline.image_nonroot else "root 运行",
+            "HEALTHCHECK" if pipeline.image_healthcheck else "无 HEALTHCHECK",
+        ]
+        details.append("镜像：" + _escape(" · ".join(marks)))
+    else:
+        details.append("镜像：未配置 Dockerfile")
+    details.append("发布：" + ("推送到 ghcr.io" if pipeline.release_to_registry else "未配置镜像仓库发布"))
+    if pipeline.latest_tag:
+        details.append("最近发布标签：" + _escape(pipeline.latest_tag))
+    details.append("首跑结果：" + _escape(pipeline.last_run_status or PIPELINE_RUN_UNKNOWN))
+
+    muted = "<br>".join(
+        f'<span style="color:{EMAIL_FG_2};">{item}</span>' for item in details
+    )
+    return _email_callout(head + f'<div style="margin-top:8px;">{muted}</div>')
+
 
 def _progress_callout(progress: RepoProgress) -> str:
     """把当日工程进展渲染成信息块（v1.8，design.md §6.8）。
@@ -719,6 +759,18 @@ def render_email_html(report: DailyReport, *, title: str = "") -> str:
         blocks.append(
             _email_callout(
                 PROGRESS_EMPTY, background=EMAIL_NEUTRAL_SOFT, accent=EMAIL_BORDER
+            )
+        )
+
+    # ---- 4.5 交付流水线（v1.13，团队级；见 design.md §3.5、§6.7(6)）----
+    blocks.append(_email_section_title("🚚", SECTION_PIPELINE))
+    if report.pipeline is not None:
+        blocks.append(_pipeline_callout(report.pipeline))
+    else:
+        # 仓库里没有工作流/镜像/标签：中性空态，不写成"流水线失败"
+        blocks.append(
+            _email_callout(
+                PIPELINE_EMPTY, background=EMAIL_NEUTRAL_SOFT, accent=EMAIL_BORDER
             )
         )
 

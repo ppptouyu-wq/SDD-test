@@ -2,7 +2,7 @@ openapi: 3.0.3
 
 info:
   title: 智能日报生成器 — 接口契约（api-spec.yaml）
-  version: 1.10.0
+  version: 1.13.0
   description: |
     本书 SDD 六阶段工作流【阶段三：接口契约】的产物之一（与 data-models.md 配套）。
 
@@ -204,8 +204,10 @@ components:
           description: 工时（小时）= check_out - check_in，保留一位小数；缺任一时刻则为 0
         status:
           type: string
-          enum: [正常, 迟到, 早退, 缺勤, 休假, 签到缺失, 签退缺失]
-          description: 考勤状态；缺失签退数据时为"签退缺失"，缺失签到但有签退时为"签到缺失"（v1.8.4）
+          enum: [正常, 迟到, 早退, 缺勤, 休假, 签到缺失, 签退缺失, 休息日]
+          description: |
+            考勤状态；缺失签退数据时为"签退缺失"，缺失签到但有签退时为"签到缺失"（v1.8.4）；
+            非工作日（双休日/配置的法定节假日）两侧都没有打卡时为"休息日"（v1.13）。
 
     # ---------- 聚合层模型 ----------
     MemberReport:
@@ -272,6 +274,44 @@ components:
             当日工程进展（v1.8 新增）。取不到本机仓库信息时为 null，邮件渲染中性空态
             "今日未记录工程进展"。**刻意不出现在 sources 里**：它是本机代码仓库的
             "工程数据源"（proposal.md §4），不是外部协作平台。
+        pipeline:
+          allOf:
+            - $ref: "#/components/schemas/PipelineStatus"
+          nullable: true
+          description: |
+            交付流水线现状（v1.13 新增）。仓库里没有工作流 / Dockerfile / 标签时为 null，
+            邮件渲染中性空态"未记录交付流水线"。同样不出现在 sources 里（design.md §3.5）。
+
+    PipelineStatus:
+      type: object
+      description: 交付流水线现状（v1.13 新增，对应 design.md §3.5 / §6.7(6)）
+      required: [ci_workflows, release_to_registry, image_stages, image_nonroot, image_healthcheck, latest_tag, last_run_status]
+      properties:
+        ci_workflows:
+          type: array
+          items: { type: string }
+          description: .github/workflows/ 下的工作流文件名（仓库根相对路径），可为空列表
+        release_to_registry:
+          type: boolean
+          description: 是否有工作流把镜像推送到镜像仓库（文件里出现 ghcr.io）
+        image_stages:
+          type: integer
+          minimum: 0
+          description: Dockerfile 里 FROM 的个数；多阶段构建 ≥ 2，没有 Dockerfile 时为 0
+        image_nonroot:
+          type: boolean
+          description: 是否显式声明 USER 且不是 root
+        image_healthcheck:
+          type: boolean
+          description: 是否声明 HEALTHCHECK
+        latest_tag:
+          type: string
+          description: git tag 里最新的版本标签（如 v1.12.0）；无标签时为空串
+        last_run_status:
+          type: string
+          description: |
+            Actions 首跑结论；**允许为空串**（令牌无 actions:read 时取不到，渲染成"未采集"）。
+            不得由本地推断填充：空 ≠ 失败，也 ≠ 跑通。
 
     RepoProgress:
       type: object

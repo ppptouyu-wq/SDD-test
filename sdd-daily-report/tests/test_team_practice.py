@@ -210,7 +210,7 @@ def test_governance_report_passed_only_without_errors():
 
 def test_measure_spec_counts_acceptance_items():
     spec = metrics_mod.measure_spec(ROOT / "specs" / "proposal.md")
-    assert spec.acceptance_items == 54  # v1.11 的 46 条 + v1.12 的 8 条（功能 5 / 性能 1 / 边界 2）
+    assert spec.acceptance_items == 59  # v1.12 的 54 条 + v1.13 的 5 条（交付流水线 3 / 边界 1 / 休息日 1）
     assert spec.out_of_scope_items == 7  # v1.12 增加"不做自动化部署"
     assert spec.lines > 0
 

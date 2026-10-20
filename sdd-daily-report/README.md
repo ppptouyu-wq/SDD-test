@@ -61,7 +61,7 @@
    | ② 真实 GitHub 仓库（2026-04-24，不推送） | 拉真实提交 |
    | ③ 健康检查（--check） | 逐项检查配置 |
    | ④ 今天（真实推送，慎用） | 会真的发邮件/推飞书 |
-   | ⑤ 跑全部测试（pytest） | 450 个用例 |
+   | ⑤ 跑全部测试（pytest） | 463 个用例 |
    | ⑥ 只跑当前打开的测试文件 | 调试单个用例 |
    | ⑦ 展示页：本地只读查看已生成的日报 | 起本地网页看日报（v1.2 新增） |
 
@@ -333,12 +333,13 @@ v1.2 的前端是用 **OpenDesign** 迭代出来的，过程留了档：
 | `tests/test_github.py` | 12 | GitHub 采集层 |
 | `tests/test_lark_task.py` | 7 | 飞书任务采集 |
 | `tests/test_lark_msg.py` | 23 | 飞书群消息采集（关键词过滤 + 敏感词剔除 + v1.8.2 五种时间戳形态 + v1.8.3 排除应用自身消息） |
-| `tests/test_attendance.py` | 17 | 飞书考勤采集（v1.1 新增） |
+| `tests/test_attendance.py` | 20 | 飞书考勤采集（v1.1 新增） |
 | `tests/test_generator.py` | 49 | 日报生成（含 v1.1 考勤逻辑、v1.3 双 ID 身份映射与「今日无记录」渲染、v1.5 提交摘要截断与条目分组、v1.6 邮件卡片版式与计数/总结句、v1.7 配色白名单与成员名条、v1.8 工程进展段与可配主题、v1.8.4 考勤行缺失侧呈现、v1.9 概览下的代码变更行数、v1.10 分板块空态与最近一次提交、v1.11 正文标题与主题同源） |
 | `tests/test_repo_progress.py` | 32 | 工程进展采集（v1.8 新增，自造临时 Git 仓库）：仓库定位、当日计数、版本号取最高、变更起点判定、闭环判定、规范覆盖率注入与降级、v1.10 最近一次提交日期 |
 | `tests/test_email.py` | 7 | SMTP 推送 |
 | `tests/test_lark_bot.py` | 8 | 飞书机器人推送 |
 | `tests/test_main.py` | 22 | `main.py` 入口：编排、`load_dotenv`、`load_tasks_file`、CLI 退出码、路径锚定、v1.3 考勤名单接线、v1.4 仅工作日开关默认关闭、v1.11 正文标题与邮件主题同源 |
+| `tests/test_pipeline.py` | 10 | 交付流水线采集（v1.13 新增：只读工作流/Dockerfile/tag，不联网） |
 | `tests/test_integration.py` | 12 | 端到端集成：全链路、单源失败不阻塞、v1.4 周末/节假日默认照常生成 |
 
 另有 11 个测试文件覆盖第 8~10 章的 Agent 设计模式与治理层（书里未规定文件清单）：
@@ -376,7 +377,7 @@ python -m pytest tests/ -v
    `_attendance_user_ids()`（从 `members[].lark_employee_id` 去重取名单）；
    `formatter.aggregate()` 增加 `by_lark_employee` 映射（空 ID 不入表）；
    `template.render_markdown()` 的考勤分支由两段变三段。
-6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.12 后为 450），规范与代码一起提交（书图 7-8 的闭环要求）。
+6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.13 后为 463），规范与代码一起提交（书图 7-8 的闭环要求）。
 
 真实跑通的证据（2026-10-09 那次）：日志从
 `飞书考勤采集失败 error: ... employeeNos is empty` 变成
@@ -700,6 +701,31 @@ v1.6 的邮件版式是照需求参考稿（一张手机邮件截图）做出来
 **为什么到 GHCR 就算完**：镜像推送到仓库后已经是"随时可部署"的制品 —— 这正是 Continuous Delivery 的终点。自动上生产（Continuous Deployment）要先有目标机器，本期明确排除，不写成"以后再说"。
 
 **一键复现**：`python scripts/verify_dockerfile.py`（本机无 Docker 也能校验镜像布局）；`python -m pytest tests/test_workflows.py -q`（流水线结构断言）。
+
+### v1.13：邮件新增「交付流水线」板块 + 非工作日不再误判「缺勤」
+
+| 层级 | 改了什么 |
+|---|---|
+| `proposal.md` §3.1/§3.3 | 新增 5 条：交付流水线板块（阶段链 + 只能来自真实文件与 Git 事实 + 不得写"已跑通"）、`pipeline=None` 的中性空态、非工作日不判缺勤 |
+| `design.md` §3.5 | 新增 `PipelineStatus`（`ci_workflows` / `release_to_registry` / `image_stages` / `image_nonroot` / `image_healthcheck` / `latest_tag` / `last_run_status`）与取数口径，写明 `last_run_status` **允许为空**（令牌无 `actions:read`，实测 403） |
+| `design.md` §6.7(6) | 板块位置：工程进展之后、按成员分组之前；只在邮件渠道 |
+| `design.md` §3.0/§3.0.1 | 考勤状态枚举加「休息日」；判定顺序改为"先判今天该不该上班，再判有没有打卡" |
+| `contracts/` | `data-models.md` 加 `PipelineStatus` 与 `DailyReport.pipeline`；`api-spec.yaml` 加同名 schema、`status` 枚举补「休息日」，版本 1.13.0 |
+| `tasks.md` | Task 7 加 6 条、Task 11 加 4 条 v1.13 验收标准；迭代记录追加一句 |
+| `shared/models.py` | 新增 `PipelineStatus` 与 `DailyReport.pipeline`（默认 None，旧数据不受影响） |
+| `collector/pipeline.py` | 新增：只读 `.github/workflows/*.yml`、`Dockerfile` 的 `FROM`/`USER`/`HEALTHCHECK`、`git tag --sort=-v:refname`；不联网、不调 Actions |
+| `generator/template.py` | `_pipeline_callout()` + 板块渲染；空态常量 `PIPELINE_EMPTY="未记录交付流水线"`、`PIPELINE_RUN_UNKNOWN="未采集（令牌无 actions:read 权限）"` |
+| `collector/lark_attendance.py` | `resolve_status(..., working_day=)`、`collect(..., working_day=True)` 与 `STATUS_REST_DAY="休息日"` |
+| `main.py` | 用 `is_working_day(day, config.report.holidays)` 算 `working_day` 传给采集层；`pipeline` 挂到日报上 |
+| 测试 | 新增 `tests/test_pipeline.py`（10 条）；`test_attendance.py` 17 → 20；`test_integration.py` 的考勤桩补 `working_day` 形参 |
+
+**触发**：老师收到 2026-10-17（周六）那封日报，考勤写着「工时 0.0h，状态：缺勤（无签到 - 无签退）」——
+周末没打卡被判成旷工；同时日报里看不出这个仓库有 CI/CD，所以补了一个如实呈现的「交付流水线」板块。
+
+**为什么"首跑结果"写「未采集」**：查 Actions 结论需要 `actions:read` 权限，日报进程手里的令牌只有仓库读权限
+（实测 `/actions/jobs/{id}/logs` 返回 403）。取不到就写未采集，**绝不**把"文件都在"说成"流水线已跑通"。
+
+**一键复现**：`python main.py --no-push`；或 `python -m pytest tests/test_pipeline.py -q`。
 
 ## 工程化配套（第 3、8、9 章）
 

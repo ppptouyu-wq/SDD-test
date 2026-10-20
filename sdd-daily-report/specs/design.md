@@ -120,7 +120,7 @@ AttendanceRecord（考勤记录）
 | check_in    | datetime \| None  | 签到时间                             |
 | check_out   | datetime \| None  | 签退时间                             |
 | work_hours  | float             | 工时（小时）                         |
-| status      | str               | 正常 / 迟到 / 早退 / 缺勤 / 休假 / 签到缺失 / 签退缺失 |
+| status      | str               | 正常 / 迟到 / 早退 / 缺勤 / 休假 / 签到缺失 / 签退缺失 / 休息日 |
 ```
 
 字段级契约与状态取值见 `contracts/data-models.md`；本节的 `AttendanceRecord` 与
@@ -156,12 +156,20 @@ v1.1 的解析代码按"猜想的响应结构"写成，读的键 `data.user_task
 
 | 条件 | status |
 |---|---|
+| 既无签到也无签退，且当日**不是工作日**（双休日/配置的法定节假日） | **休息日**（v1.13 新增） |
 | 既无签到也无签退 | 缺勤 |
 | 无签到、有签退 | **签到缺失**（v1.8.4 新增：真实数据里 `check_in_result == "Lack"` 且 `check_in_record` 键缺失） |
 | 有签到、无签退 | 签退缺失 |
 | 两者都有，任一段签到结果为 `Late` | 迟到 |
 | 两者都有，任一段签退结果为 `Early` | 早退 |
 | 其余 | 正常 |
+
+- **休息日（v1.13）**：周末与配置的法定节假日不打卡是常态，判成「缺勤」会把"正常休息"
+  读成"旷工"。所以判定顺序把这条放在最前：**先判"今天该不该上班"，再判"有没有打卡"**；
+  工作日行为完全不变。`working_day` 由 `main.py` 用
+  `shared.calendar.is_working_day(day, config.report.holidays)` 算好后传给
+  `lark_attendance.collect(..., working_day=...)` —— 采集层不自己读配置、也不判断节假日。
+  休息日里只缺一侧（有签到无签退之类）仍按 `签到缺失 / 签退缺失` 判，不吞掉异常打卡。
 
 - **解析不到时必须出声**：若响应里既没有 `user_task_results`、也没有旧键
   `user_tasks`，采集器要打 WARNING 并带上实际出现的键名，不允许再静默返回 0 条
@@ -344,6 +352,41 @@ class RepoProgress:
 `progress=None`，板块渲染中性空态「今日未记录工程进展」，同时写一条 WARNING 日志。
 
 > 对应验收标准：`proposal.md` §3.1 的 v1.8 四条与 v1.10 三条；`tasks.md` Task 13。
+
+### 3.5 交付流水线数据模型（v1.13 需求变更新增）
+
+**触发**：v1.12 把 CI/CD 接上了，但日报里完全看不出来——「今日工程进展」只讲当日提交与规范闭环，
+收件人无法从日报本身判断"这个仓库有没有 CI、有没有镜像、有没有发布流水线"。
+v1.13 在邮件里补一个板块，把交付链路讲清楚。
+
+**取数原则：只读仓库里的文件与 Git 事实。不联网、不调 Actions API、不臆测。**
+
+```python
+@dataclass
+class PipelineStatus:
+    """交付流水线现状（v1.13 新增；团队级，不进 MemberReport）"""
+
+    ci_workflows: list[str]    # .github/workflows/ 下的工作流文件名（仓库根相对路径）
+    release_to_registry: bool  # 是否有工作流把镜像推到镜像仓库（文件里出现 ghcr.io）
+    image_stages: int          # Dockerfile 里 FROM 的个数（多阶段构建 ≥ 2）
+    image_nonroot: bool        # 是否显式 USER 且不是 root
+    image_healthcheck: bool    # 是否有 HEALTHCHECK
+    latest_tag: str            # git tag 里最新的版本标签，如 "v1.12.0"；无则空串
+    last_run_status: str       # 首跑结论；本机取不到即空串（渲染成"未采集"）
+```
+
+**为什么 `last_run_status` 允许为空，而且必须允许为空**：查 Actions 的运行结论需要
+带 `actions:read` 权限的令牌，日报进程手里那个 `GITHUB_TOKEN` 只有仓库读权限
+（v1.13 实现时实测：打 `/repos/{owner}/{repo}/actions/jobs/{id}/logs` 返回 **403**）。
+取不到就写"未采集（令牌无 actions:read 权限）"——**绝不能**把"文件都在"说成"流水线已跑通"。
+这条口径直接对应 `proposal.md` §3.1 v1.13 第 2 条：状态只能来自真实文件与 Git 事实。
+
+**降级**：本机不是 Git 仓库、或仓库里没有任何流水线文件时 `pipeline = None`，
+邮件渲染中性空态「未记录交付流水线」，不报错、不影响其他板块（`proposal.md` §3.3 v1.13）。
+
+**它不是数据源**：与 `RepoProgress` 同理，不进 `DailyReport.sources`（§3.4 末段）。
+
+> 对应验收标准：`proposal.md` §3.1 的 v1.13 三条与 §3.3 的 v1.13 一条；`tasks.md` Task 15。
 
 ## 4. 接口契约
 
@@ -624,7 +667,7 @@ OpenDesign 的 `ant` 设计系统（企业级、数据密集）的令牌值，�
 > 给出的是通用占位色（`#1677FF` 等）并与令牌文件冲突；以**机器可读的
 > `design-tokens.json`（`layer: A1-identity`，`sourceBackedTokens: 56`）为准**。
 
-### 6.7 邮件日报的版式与配色（v1.6 需求变更新增；v1.7 换色与结构微调；v1.9 概览下增一行代码变更行数；v1.10 空态分板块说清）
+### 6.7 邮件日报的版式与配色（v1.6 需求变更新增；v1.7 换色与结构微调；v1.9 概览下增一行代码变更行数；v1.10 空态分板块说清；v1.13 增交付流水线板块）
 
 **(1) 邮件是独立画布，不与展示层共用色板**：`webview/` 用的是 `ant` 设计令牌（§6.5、§6.6(4)），
 而邮件会被转发到任意邮件客户端、主要在手机上阅读，两者不是同一块画布。因此邮件单独定义一套
@@ -715,6 +758,21 @@ v1.8 在"今日总结"之后插入团队级的"今日工程进展"）：
 （Markdown 与邮件）。
 
 采集失败的来源在顶部用告警块显式列出，严禁静默跳过（§6.1）。
+
+**(6) 「交付流水线」板块（v1.13）**：位于「今日工程进展」**之后**、按成员分组**之前**，
+只在**邮件渠道**出现（展示页保持 v1.2 约定）。内容是一条阶段链 + 四行现状：
+
+```
+测试门禁 ──▶ 镜像构建 ──▶ 发布到镜像仓库 ──▶ 部署（本期不做）
+```
+
+| 行 | 内容 | 取数 |
+|---|---|---|
+| CI 工作流 | 工作流文件名（逗号分隔） | `.github/workflows/*.yml` |
+| 镜像 | "N 阶段 · 非 root · HEALTHCHECK" | `Dockerfile` 的 `FROM`/`USER`/`HEALTHCHECK` |
+| 发布 | "推送到 ghcr.io" 或 "未配置" | 工作流文件里是否出现 `ghcr.io` |
+| 最近发布标签 | 如 `v1.12.0` | `git tag --sort=-v:refname` |
+| 首跑结果 | "未采集（令牌无 actions:read 权限）" | 取不到就写未采集，不猜（§3.5） |
 
 ### 6.8 今日工程进展板块的取数规则（v1.8 需求变更新增）
 

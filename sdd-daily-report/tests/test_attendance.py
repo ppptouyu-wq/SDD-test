@@ -192,6 +192,28 @@ def test_resolve_status_helper():
     assert lark_attendance.resolve_status("迟到", start, start) == "迟到"
 
 
+# ---- v1.13：非工作日不判缺勤（周末/法定节假日两侧都没打卡 → 休息日）----
+
+
+def test_resolve_status_marks_rest_day_on_non_working_days():
+    """周末与节假日不打卡是常态；判成"缺勤"等于把正常休息读成旷工。"""
+    assert lark_attendance.resolve_status(None, None, None, working_day=False) == "休息日"
+
+
+def test_resolve_status_keeps_absent_on_working_days():
+    """默认 working_day=True，工作日两侧都缺仍必须判"缺勤" —— 不能顺手放过。"""
+    assert lark_attendance.resolve_status(None, None, None) == "缺勤"
+    assert lark_attendance.resolve_status(None, None, None, working_day=True) == "缺勤"
+
+
+def test_rest_day_does_not_swallow_half_punches():
+    """休息日只缺一侧时仍按签到/签退缺失判，异常打卡不能被"休息日"吞掉。"""
+    start = datetime(2026, 8, 22, 9, 0, tzinfo=TZ)
+
+    assert lark_attendance.resolve_status(None, None, start, working_day=False) == "签到缺失"
+    assert lark_attendance.resolve_status(None, start, None, working_day=False) == "签退缺失"
+
+
 def test_api_unavailable_returns_failure_with_detail(config):
     """验收标准：当 API 不可用时，success 置为 False 并附带详细错误信息。"""
 

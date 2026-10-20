@@ -46,6 +46,10 @@ jobs:
           - brownfield-demo
     steps:
       - uses: actions/checkout@v4
+        with:
+          # v1.13.1：与 workspace-ci 同理，浅克隆没有 tag，发布门禁里的
+          # "最近发布标签"会取空；发布这条链路必须自己验证，不能靠别的 workflow。
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:

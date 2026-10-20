@@ -42,6 +42,10 @@ jobs:
     name: test / ${{ matrix.project }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # v1.13.1：默认浅克隆不带 tag，`git tag --list` 取不到"最近发布标签"，
+          # 会让依赖标签的用例在 CI 上红、本地绿。这里拉全历史与标签（仓库很小）。
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:

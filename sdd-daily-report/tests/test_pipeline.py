@@ -1,4 +1,4 @@
-﻿"""交付流水线采集与渲染（v1.13；specs/design.md §3.5、§6.7(6)）。
+"""交付流水线采集与渲染（v1.13；specs/design.md §3.5、§6.7(6)）。
 
 只读仓库文件与 Git 事实：工作流文件名、`Dockerfile` 的 `FROM`/`USER`/`HEALTHCHECK`、`git tag`。
 本文件重点守两条底线：
@@ -19,6 +19,37 @@ from shared.models import PipelineStatus
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent  # sdd-reproduction/
 DAY = date(2026, 8, 20)
+
+
+def _minimal_repo(tmp_dir: Path) -> Path:
+    """造一个"有工作流、有 Dockerfile、有 .git，但不一定有 tag"的仓库。"""
+    root = tmp_dir / "mini"
+    (root / ".github" / "workflows").mkdir(parents=True)
+    (root / ".github" / "workflows" / "release-image.yml").write_text(
+        "name: release\njobs:\n  push:\n    steps:\n      - run: docker push ghcr.io/x/y\n",
+        encoding="utf-8",
+    )
+    (root / "Dockerfile").write_text(
+        "FROM python:3.11-slim AS builder\n"
+        "FROM python:3.11-slim AS runtime\n"
+        "USER app\n"
+        "HEALTHCHECK CMD true\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "add", "-A"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "init"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+    return root
 
 
 # --------------------------------------------------------------- 文件与镜像事实
@@ -67,7 +98,35 @@ def test_collect_reads_the_real_repository():
     assert status.image_stages >= 2, "Dockerfile 是多阶段构建"
     assert status.image_nonroot is True
     assert status.image_healthcheck is True
-    assert status.latest_tag.startswith("v")
+    # 标签刻意**不**断言"一定有值"：CI 的 actions/checkout 是浅克隆、不带 tag，
+    # 这里断言"必须是 v1.x"会让本地绿、CI 红（v1.13.1 修的就是这个）。
+    # 有值时只需是 v 开头；"读得到"由下面用临时仓库建 tag 的确定性用例证明。
+    assert status.latest_tag == "" or status.latest_tag.startswith("v")
+
+
+def test_latest_tag_is_read_from_git_tags(tmp_dir):
+    """确定性验证：仓库里打了 tag，就能读到它（不依赖当前工作区的 Git 状态）。"""
+    root = _minimal_repo(tmp_dir)
+    subprocess.run(["git", "tag", "v9.9.9"], cwd=root, check=True, capture_output=True)
+
+    status = pipeline_collector.collect(root)
+
+    assert status is not None
+    assert status.latest_tag == "v9.9.9"
+
+
+def test_latest_tag_is_empty_without_any_tag(tmp_dir):
+    """浅克隆（无 tag）下的真实情况：标签为空串，但采集本身照样成立。
+
+    这一条是 v1.13.1 的回归护栏——CI 就是因为断言"必须有 tag"才红的。
+    """
+    root = _minimal_repo(tmp_dir)
+
+    status = pipeline_collector.collect(root)
+
+    assert status is not None
+    assert status.latest_tag == ""
+    assert status.ci_workflows and status.release_to_registry is True
 
 
 def test_collect_never_fabricates_the_run_status():

@@ -353,40 +353,68 @@ class RepoProgress:
 
 > 对应验收标准：`proposal.md` §3.1 的 v1.8 四条与 v1.10 三条；`tasks.md` Task 13。
 
-### 3.5 交付流水线数据模型（v1.13 需求变更新增）
+### 3.5 交付流水线数据模型（v1.13 需求变更新增；v1.14 增真实运行结论）
 
 **触发**：v1.12 把 CI/CD 接上了，但日报里完全看不出来——「今日工程进展」只讲当日提交与规范闭环，
 收件人无法从日报本身判断"这个仓库有没有 CI、有没有镜像、有没有发布流水线"。
 v1.13 在邮件里补一个板块，把交付链路讲清楚。
+v1.14 再补一刀：v1.13 的「首跑结果」一律写"未采集"，等于把最重要的一项留成了永远的空——
+而"最近一次运行到底绿没绿"恰恰是老师第一眼要看的东西。
 
-**取数原则：只读仓库里的文件与 Git 事实。不联网、不调 Actions API、不臆测。**
+**取数原则：每一项都必须能被收件人当场复核 —— 文件类事实读仓库，运行结论读公开接口，读不到就写"未采集"。**
 
 ```python
 @dataclass
 class PipelineStatus:
-    """交付流水线现状（v1.13 新增；团队级，不进 MemberReport）"""
+    """交付流水线现状（v1.13 新增；v1.14 增 last_run_commit；团队级，不进 MemberReport）"""
 
     ci_workflows: list[str]    # .github/workflows/ 下的工作流文件名（仓库根相对路径）
     release_to_registry: bool  # 是否有工作流把镜像推到镜像仓库（文件里出现 ghcr.io）
     image_stages: int          # Dockerfile 里 FROM 的个数（多阶段构建 ≥ 2）
     image_nonroot: bool        # 是否显式 USER 且不是 root
     image_healthcheck: bool    # 是否有 HEALTHCHECK
-    latest_tag: str            # git tag 里最新的版本标签，如 "v1.12.0"；无则空串
-    last_run_status: str       # 首跑结论；本机取不到即空串（渲染成"未采集"）
+    latest_tag: str            # 最新版本标签，如 "v1.14.0"；远端优先、回退本地 git tag；无则空串
+    last_run_status: str       # 最近一次运行结论："成功（8 项全部通过）" / "失败（1/8 项未通过）"
+                               # / "进行中（2/8 项未完成）"；取不到即空串（渲染成"未采集"）
+    last_run_commit: str       # 该结论对应的提交哈希前 7 位；空串表示没有可复核的哈希
 ```
 
-**为什么 `last_run_status` 允许为空，而且必须允许为空**：查 Actions 的运行结论需要
-带 `actions:read` 权限的令牌，日报进程手里那个 `GITHUB_TOKEN` 只有仓库读权限
-（v1.13 实现时实测：打 `/repos/{owner}/{repo}/actions/jobs/{id}/logs` 返回 **403**）。
-取不到就写"未采集（令牌无 actions:read 权限）"——**绝不能**把"文件都在"说成"流水线已跑通"。
-这条口径直接对应 `proposal.md` §3.1 v1.13 第 2 条：状态只能来自真实文件与 Git 事实。
+#### v1.14：两个公开接口，都不用带 `actions:read`
 
-**降级**：本机不是 Git 仓库、或仓库里没有任何流水线文件时 `pipeline = None`，
-邮件渲染中性空态「未记录交付流水线」，不报错、不影响其他板块（`proposal.md` §3.3 v1.13）。
+| 要什么 | 打哪个接口（全部匿名可读，按 `proposal.md` §3.1 v1.14 第 1 条） | 失败时 |
+|---|---|---|
+| 默认分支 | `GET {api_base}/repos/{slug}` → `default_branch` | 回退字面量 `main` |
+| 最近一次运行 | `GET {api_base}/repos/{slug}/commits/{branch}/check-runs?per_page=100` | `last_run_status` / `last_run_commit` 留空 |
+| 最新版本标签 | `GET {api_base}/repos/{slug}/tags?per_page=100` | 回退本地 `git tag --list 'v*' --sort=-v:refname` |
+
+**为什么 v1.13 说"取不到"、v1.14 又说"能取到"**：v1.13 当时打的是
+`/repos/{owner}/{repo}/actions/jobs/{id}/logs`（**日志**接口，实测 403），据此推断"结论也取不到"。
+v1.14 实测 `GET .../commits/{sha}/check-runs` **匿名返回 200** —— 结论是公开的，只有日志要权限。
+旧口径因此是个**事实性错误**，`PIPELINE_RUN_UNKNOWN` 的文案里那句"（令牌无 actions:read 权限）"
+必须删掉：它把一个可以拿到的东西说成拿不到，同样是"说错话"。
+
+**结论聚合口径（纯函数 `check_runs_summary(payload)`，见 `tasks.md` Task 15）**：
+
+| 输入 | 输出 |
+|---|---|
+| `check_runs` 为空 / `total_count == 0` | `("", "")` —— 没有检查项就没有结论，不写"成功" |
+| 存在 `status != "completed"` 的检查项 | `("进行中（N/M 项未完成）", sha[:7])` |
+| 全部 completed，且存在 `conclusion ∉ {success, neutral, skipped}` | `("失败（K/M 项未通过）", sha[:7])` |
+| 全部 completed，且无失败 | `("成功（M 项全部通过）", sha[:7])` |
+
+`sha` 取任一 check run 的 `head_sha` 前 7 位（同一次提交的检查项 `head_sha` 相同）。
+
+**降级**：本机不是 Git 仓库、或仓库里没有任何流水线文件、也没有任何可读的运行结论时
+`pipeline = None`，邮件渲染中性空态「未记录交付流水线」，不报错、不影响其他板块
+（`proposal.md` §3.3 v1.13）。有仓库标识但接口读不到时**不是** `None`：文件类事实照常呈现，
+只有「最近一次运行」那一行写"未采集"（`proposal.md` §3.3 v1.14）。
+
+**可测试性**：`collect()` 接受注入的 `http_get(url) -> dict | None`（与 §3.4 的
+`coverage` 注入同一手法），默认实现用 `httpx` 带超时；测试用假取数函数，永不打真网络。
 
 **它不是数据源**：与 `RepoProgress` 同理，不进 `DailyReport.sources`（§3.4 末段）。
 
-> 对应验收标准：`proposal.md` §3.1 的 v1.13 三条与 §3.3 的 v1.13 一条；`tasks.md` Task 15。
+> 对应验收标准：`proposal.md` §3.1 的 v1.13 三条与 v1.14 六条、§3.3 的 v1.13 一条与 v1.14 一条；`tasks.md` Task 15。
 
 ## 4. 接口契约
 
@@ -771,8 +799,8 @@ v1.8 在"今日总结"之后插入团队级的"今日工程进展"）：
 | CI 工作流 | 工作流文件名（逗号分隔） | `.github/workflows/*.yml` |
 | 镜像 | "N 阶段 · 非 root · HEALTHCHECK" | `Dockerfile` 的 `FROM`/`USER`/`HEALTHCHECK` |
 | 发布 | "推送到 ghcr.io" 或 "未配置" | 工作流文件里是否出现 `ghcr.io` |
-| 最近发布标签 | 如 `v1.12.0` | `git tag --sort=-v:refname` |
-| 首跑结果 | "未采集（令牌无 actions:read 权限）" | 取不到就写未采集，不猜（§3.5） |
+| 最新版本标签 | 如 `v1.14.0` | 远端 `v*` 标签优先，回退 `git tag --sort=-v:refname`（v1.14 改口径：只表示"仓库上最新的版本标签"，不宣称镜像已按此标签发布） |
+| 最近一次运行 | "成功（8 项全部通过），提交 4ebbcbf" | 公开 Check Runs 接口（v1.14）；取不到写"未采集（公开 Check Runs 接口读不到）"，不猜（§3.5） |
 
 ### 6.8 今日工程进展板块的取数规则（v1.8 需求变更新增）
 

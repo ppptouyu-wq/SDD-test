@@ -61,7 +61,7 @@
    | ② 真实 GitHub 仓库（2026-04-24，不推送） | 拉真实提交 |
    | ③ 健康检查（--check） | 逐项检查配置 |
    | ④ 今天（真实推送，慎用） | 会真的发邮件/推飞书 |
-   | ⑤ 跑全部测试（pytest） | 463 个用例 |
+   | ⑤ 跑全部测试（pytest） | 478 个用例 |
    | ⑥ 只跑当前打开的测试文件 | 调试单个用例 |
    | ⑦ 展示页：本地只读查看已生成的日报 | 起本地网页看日报（v1.2 新增） |
 
@@ -339,7 +339,7 @@ v1.2 的前端是用 **OpenDesign** 迭代出来的，过程留了档：
 | `tests/test_email.py` | 7 | SMTP 推送 |
 | `tests/test_lark_bot.py` | 8 | 飞书机器人推送 |
 | `tests/test_main.py` | 22 | `main.py` 入口：编排、`load_dotenv`、`load_tasks_file`、CLI 退出码、路径锚定、v1.3 考勤名单接线、v1.4 仅工作日开关默认关闭、v1.11 正文标题与邮件主题同源 |
-| `tests/test_pipeline.py` | 10 | 交付流水线采集（v1.13 新增：只读工作流/Dockerfile/tag，不联网） |
+| `tests/test_pipeline.py` | 25 | 交付流水线采集（v1.13 新增：只读工作流/Dockerfile/tag；v1.14 增公开 Check Runs 的结论聚合、远端标签与注入取数） |
 | `tests/test_integration.py` | 12 | 端到端集成：全链路、单源失败不阻塞、v1.4 周末/节假日默认照常生成 |
 
 另有 11 个测试文件覆盖第 8~10 章的 Agent 设计模式与治理层（书里未规定文件清单）：
@@ -377,7 +377,7 @@ python -m pytest tests/ -v
    `_attendance_user_ids()`（从 `members[].lark_employee_id` 去重取名单）；
    `formatter.aggregate()` 增加 `by_lark_employee` 映射（空 ID 不入表）；
    `template.render_markdown()` 的考勤分支由两段变三段。
-6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.13 后为 463），规范与代码一起提交（书图 7-8 的闭环要求）。
+6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.14 后为 478），规范与代码一起提交（书图 7-8 的闭环要求）。
 
 真实跑通的证据（2026-10-09 那次）：日志从
 `飞书考勤采集失败 error: ... employeeNos is empty` 变成
@@ -725,7 +725,37 @@ v1.6 的邮件版式是照需求参考稿（一张手机邮件截图）做出来
 **为什么"首跑结果"写「未采集」**：查 Actions 结论需要 `actions:read` 权限，日报进程手里的令牌只有仓库读权限
 （实测 `/actions/jobs/{id}/logs` 返回 403）。取不到就写未采集，**绝不**把"文件都在"说成"流水线已跑通"。
 
+**v1.14 更正**：上面这段的结论错了 —— 403 的是「作业日志」接口，`/commits/{sha}/check-runs` 是公开接口，匿名即可读。v1.14 起「最近一次运行」直接显示真实结论与 7 位提交哈希。
+
 **一键复现**：`python main.py --no-push`；或 `python -m pytest tests/test_pipeline.py -q`。
+
+### v1.14：交付流水线的「最近一次运行」改成真实结论
+
+| 层级 | 改了什么 |
+|---|---|
+| `proposal.md` §2.1/§3.1/§3.3 | 新增 7 条：读公开 Check Runs 拿真实结论、结论必须带 7 位提交哈希、聚合口径（成功/失败/进行中）、读不到写「未采集（公开 Check Runs 接口读不到）」、最新版本标签远端优先并回退本地 `git tag`、接口失败只影响该行 |
+| `design.md` §3.5 | 整段重写：三个公开接口、`PipelineStatus` 增 `last_run_commit`、聚合口径表、注入 `http_get` 便于测试；写明 v1.13 与 v1.14 的结论为何不同 |
+| `design.md` §6.7(6) | 行名改「最新版本标签」「最近一次运行」，示例 `成功（8 项全部通过），提交 4ebbcbf` |
+| `contracts/` | `data-models.md` 加 `last_run_commit`；`api-spec.yaml` 版本 1.14.0、schema 加该字段 |
+| `tasks.md` | 新增 Task 15（回溯补登采集模块，任务数 14 → 15，9 条验收标准）；Task 7 加 4 条 v1.14 验收标准 |
+| `shared/models.py` | `PipelineStatus` 增 `last_run_commit: str = ""` |
+| `collector/pipeline.py` | 新增 `_http_get_json()`、`check_runs_summary()`、`latest_remote_tag()`；`collect(..., slug=, token=, api_base=, timeout=, http_get=)`，`slug` 为空时**一次请求都不发** |
+| `generator/template.py` | `PIPELINE_RUN_UNKNOWN` 改为「未采集（公开 Check Runs 接口读不到）」；行名改「最新版本标签」「最近一次运行」，有哈希才拼「，提交 」 |
+| `main.py` | 把 `config.github.repos[0]` 当 `slug`、令牌当可选 `token` 传给采集层 |
+| 测试 | `tests/test_pipeline.py` 12 → 25 条（聚合口径四态、版本号比较、注入取数、无 slug 不联网、邮件呈现） |
+
+**触发**：v1.13 那封日报写「首跑结果：未采集（令牌无 actions:read 权限）」，但实测
+`GET /repos/{owner}/{repo}/commits/{sha}/check-runs` **匿名就能拿到 200** —— 403 的是
+`.../actions/jobs/{id}/logs`（**日志**要权限，**结论**不要）。一句话写错，整封邮件都会跟着错。
+
+**为什么结论必须带提交哈希**：只写「成功」无法复核 —— 不知道成功的是哪一次提交。
+7 位哈希让收件人能原样回查 `https://github.com/<slug>/commit/<sha>`。
+
+**为什么「最新版本标签」远端优先**：容器里 `.dockerignore` 排掉了 `.git`，本地 `git tag`
+在镜像中是空的；远端 `/tags` 才是"已经以版本号发布过哪些镜像"的真凭据，取不到才退回本地。
+
+**一键复现**：`python main.py --no-push`（日志出现 `run=成功（8 项全部通过）@4ebbcbf`）；
+或 `python -m pytest tests/test_pipeline.py -q`。
 
 ## 工程化配套（第 3、8、9 章）
 

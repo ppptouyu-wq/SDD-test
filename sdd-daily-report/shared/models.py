@@ -93,11 +93,10 @@ class RepoProgress:
 
 @dataclass
 class PipelineStatus:
-    """交付流水线现状（v1.13 新增，团队级；见 specs/design.md §3.5、§6.7(6)）。
+    """交付流水线现状（v1.13 新增、v1.14 增运行结论；团队级；见 specs/design.md §3.5、§6.7(6)）。
 
-    取数只读**仓库里的文件与 Git 事实**：`.github/workflows/*.yml`、`Dockerfile`、`git tag`。
-    刻意不联网、不调 Actions API —— 日报进程手里的令牌没有 `actions:read`
-    （实测打 Actions 日志接口返回 403），所以 `last_run_status` 允许为空。
+    三类取数：仓库文件（工作流、Dockerfile）、本地 Git 事实（`git tag`，作远端标签的回退）、
+    GitHub **公开**接口（默认分支、最新提交的 Check Runs、远端 `v*` 标签，v1.14）。
     **空 ≠ 失败，也 ≠ 跑通**：取不到就写"未采集"，绝不把"文件都在"说成"流水线已跑通"。
     """
 
@@ -106,8 +105,10 @@ class PipelineStatus:
     image_stages: int = 0  # Dockerfile 里 FROM 的个数；多阶段构建 ≥ 2
     image_nonroot: bool = False  # 是否显式 USER 且不是 root
     image_healthcheck: bool = False  # 是否有 HEALTHCHECK
-    latest_tag: str = ""  # git tag 里最新的版本标签，如 v1.12.0；无则空串
-    last_run_status: str = ""  # 首跑结论；取不到即空串（渲染成"未采集"）
+    latest_tag: str = ""  # 最新版本标签（远端优先、回退本地 git tag）；无则空串
+    last_run_status: str = ""  # 最近一次运行结论；取不到即空串（渲染成"未采集"）
+    # 该结论对应的提交哈希前 7 位（v1.14）：没有哈希的结论无法复核，等于不可信。
+    last_run_commit: str = ""
 
 
 @dataclass

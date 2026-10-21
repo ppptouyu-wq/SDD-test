@@ -2,7 +2,7 @@ openapi: 3.0.3
 
 info:
   title: 智能日报生成器 — 接口契约（api-spec.yaml）
-  version: 1.13.0
+  version: 1.14.0
   description: |
     本书 SDD 六阶段工作流【阶段三：接口契约】的产物之一（与 data-models.md 配套）。
 
@@ -284,8 +284,8 @@ components:
 
     PipelineStatus:
       type: object
-      description: 交付流水线现状（v1.13 新增，对应 design.md §3.5 / §6.7(6)）
-      required: [ci_workflows, release_to_registry, image_stages, image_nonroot, image_healthcheck, latest_tag, last_run_status]
+      description: 交付流水线现状（v1.13 新增；v1.14 增 last_run_commit，对应 design.md §3.5 / §6.7(6)）
+      required: [ci_workflows, release_to_registry, image_stages, image_nonroot, image_healthcheck, latest_tag, last_run_status, last_run_commit]
       properties:
         ci_workflows:
           type: array
@@ -306,12 +306,18 @@ components:
           description: 是否声明 HEALTHCHECK
         latest_tag:
           type: string
-          description: git tag 里最新的版本标签（如 v1.12.0）；无标签时为空串
+          description: |
+            最新版本标签（如 v1.14.0）：远端 v* 标签优先，取不到回退本地 git tag；都无则空串。
+            只表示"仓库上最新的版本标签"，不宣称镜像已按此标签发布。
         last_run_status:
           type: string
           description: |
-            Actions 首跑结论；**允许为空串**（令牌无 actions:read 时取不到，渲染成"未采集"）。
+            最近一次运行结论：成功（N 项全部通过）／失败（K/M 项未通过）／进行中（N/M 项未完成）。
+            允许为空串（无 Check Run 或接口读不到，渲染成"未采集"）。
             不得由本地推断填充：空 ≠ 失败，也 ≠ 跑通。
+        last_run_commit:
+          type: string
+          description: 该结论对应的提交哈希前 7 位，供收件人回查；无结论时为空串（v1.14）
 
     RepoProgress:
       type: object

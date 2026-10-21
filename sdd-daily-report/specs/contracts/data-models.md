@@ -96,7 +96,7 @@
 > 取数原则见 `design.md` §6.8：板块里只允许出现 `git` 与 `metrics` 能直接算出来的数字，
 > 不得出现"测试全部通过"这类需要现场执行才能确认的断言。
 
-### PipelineStatus（交付流水线）— v1.13 新增
+### PipelineStatus（交付流水线）— v1.13 新增；v1.14 增 `last_run_commit`
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | ci_workflows | list[str] | 是 | `.github/workflows/` 下的工作流文件名（仓库根相对路径），可为空列表 |
@@ -104,10 +104,11 @@
 | image_stages | int | 是 | `Dockerfile` 里 `FROM` 的个数；多阶段构建 ≥ 2。没有 Dockerfile 时为 0 |
 | image_nonroot | bool | 是 | 是否显式声明 `USER` 且不是 root |
 | image_healthcheck | bool | 是 | 是否声明 `HEALTHCHECK` |
-| latest_tag | str | 是 | `git tag` 里最新的版本标签（如 `v1.12.0`）；无标签时为空串 |
-| last_run_status | str | 是 | Actions 首跑结论；**允许为空串**（令牌无 `actions:read` 时取不到，渲染成"未采集"）。不得由本地推断填充 |
+| latest_tag | str | 是 | 最新版本标签（如 `v1.14.0`）：**远端 `v*` 标签优先**，取不到回退本地 `git tag`；都无则空串（v1.14 改口径） |
+| last_run_status | str | 是 | 最近一次运行结论，三种取值：`成功（N 项全部通过）`／`失败（K/M 项未通过）`／`进行中（N/M 项未完成）`；**允许为空串**（无 Check Run 或接口读不到，渲染成"未采集"）。不得由本地推断填充（v1.14） |
+| last_run_commit | str | 是 | 该结论对应的提交哈希前 7 位，供收件人回查；无结论时为空串（v1.14） |
 
-> 取数口径见 `design.md` §3.5：只读仓库文件与 Git 事实，不联网、不臆测；
+> 取数口径见 `design.md` §3.5：文件类事实读仓库，运行结论读 GitHub 公开 Check Runs 接口；
 > `last_run_status` 为空是**正常状态**，不等于流水线失败，也不等于跑通。
 
 ## 3. 展示层视图模型（v1.2 迭代新增）

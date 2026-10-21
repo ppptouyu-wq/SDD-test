@@ -114,11 +114,11 @@ python main.py --serve --db 其他库.db  # 换日报库
 
 | 目录 | 内容 | 测试 |
 |---|---|---|
-| `sdd-daily-report/` | **主项目**「智能日报生成器」（第 4-7 章）。含 Agent 设计模式、团队实践与度量、适用性自评、Harness 审计、本地只读展示页（v1.2 迭代）、飞书双 ID 考勤接线（v1.3 迭代）、默认每天可跑（v1.4 迭代）、提交摘要渲染（v1.5 迭代）、提交条目分组呈现（v1.5.1 修复）、邮件卡片式可视化版式（v1.6 迭代）、邮件版式换色与结构微调（v1.7 迭代）、工程进展板块与可配邮件主题（v1.8 迭代）、飞书消息时间戳修正（v1.8.2 修复）、协作沟通只收真人发言（v1.8.3 迭代）、考勤按真实响应结构解析（v1.8.4 修复）、概览下当日代码变更行数（v1.9 迭代）、空态分板块说清与最近一次提交（v1.10 迭代）、正文标题与邮件主题同源（v1.11 迭代）、CI/CD 流水线与镜像交付（v1.12 迭代）、交付流水线板块与非工作日考勤口径（v1.13 迭代） | 463 通过 |
+| `sdd-daily-report/` | **主项目**「智能日报生成器」（第 4-7 章）。含 Agent 设计模式、团队实践与度量、适用性自评、Harness 审计、本地只读展示页（v1.2 迭代）、飞书双 ID 考勤接线（v1.3 迭代）、默认每天可跑（v1.4 迭代）、提交摘要渲染（v1.5 迭代）、提交条目分组呈现（v1.5.1 修复）、邮件卡片式可视化版式（v1.6 迭代）、邮件版式换色与结构微调（v1.7 迭代）、工程进展板块与可配邮件主题（v1.8 迭代）、飞书消息时间戳修正（v1.8.2 修复）、协作沟通只收真人发言（v1.8.3 迭代）、考勤按真实响应结构解析（v1.8.4 修复）、概览下当日代码变更行数（v1.9 迭代）、空态分板块说清与最近一次提交（v1.10 迭代）、正文标题与邮件主题同源（v1.11 迭代）、CI/CD 流水线与镜像交付（v1.12 迭代）、交付流水线板块与非工作日考勤口径（v1.13 迭代）、交付流水线的真实运行结论（v1.14 迭代） | 478 通过 |
 | `kb-search/` | **案例项目**「知识库语义搜索工具」（第 1-2 章） | 109 通过、1 跳过 |
 | `brownfield-demo/` | **Brownfield 四步法**演示（第 7.4 节） | 50 通过 |
 
-合计 **622 个测试**。一键运行：
+合计 **637 个测试**。一键运行：
 
 ```bash
 python run_all_tests.py     # 需先安装 pytest
@@ -314,9 +314,10 @@ python -m pytest tests/ -v
 | `tests/test_integration.py` | ✅ | 12 |
 
 除书列的 9 个之外，本复现为第 8~10 章的 Agent 设计模式与治理层另建了
-11 个测试文件（`test_agents.py` 26、`test_team_practice.py` 32、`test_contracts.py` 30、
+12 个测试文件（`test_agents.py` 26、`test_team_practice.py` 32、`test_contracts.py` 30、
 `test_framework.py` 21、`test_suitability.py` 20、`test_tool_configs.py` 20、
-`test_harness.py` 16、`test_shared.py` 18、`test_dockerfile.py` 13、`test_workflows.py` 15），
+`test_harness.py` 16、`test_shared.py` 18、`test_dockerfile.py` 13、`test_workflows.py` 15、
+`test_pipeline.py` 25），
 以及 v1.2 迭代新增的 `test_webview.py` 50。
 
 三点如实说明：

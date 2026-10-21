@@ -582,20 +582,21 @@ CHANGE_LAYER_ORIGIN = {
 SECTION_PROGRESS = "今日工程进展"
 PROGRESS_EMPTY = "今日未记录工程进展"
 
-# 交付流水线板块（v1.13，design.md §3.5 / §6.7(6)）
+# 交付流水线板块（v1.13，design.md §3.5 / §6.7(6)；v1.14 增真实运行结论）
 SECTION_PIPELINE = "交付流水线"
 PIPELINE_EMPTY = "未记录交付流水线"
 PIPELINE_STAGES = "测试门禁 ──▶ 镜像构建 ──▶ 发布到镜像仓库 ──▶ 部署（本期不做）"
-# 令牌没有 actions:read → 首跑结论取不到。写"未采集"，不写"已跑通"。
-PIPELINE_RUN_UNKNOWN = "未采集（令牌无 actions:read 权限）"
+# 结论读不到时明写"未采集"。v1.14 更正了原因：Check Runs 是公开接口，
+# 读不到只可能是网络/限流/没配仓库标识，不再拿"令牌没权限"当挡箭牌。
+PIPELINE_RUN_UNKNOWN = "未采集（公开 Check Runs 接口读不到）"
 
 
 def _pipeline_callout(pipeline: PipelineStatus) -> str:
-    """把交付流水线渲染成一条阶段链 + 四行现状（v1.13）。
+    """把交付流水线渲染成一条阶段链 + 五行现状（v1.13；v1.14 改两行）。
 
     **只放能当场复核的事实**：工作流文件名、Dockerfile 的 FROM/USER/HEALTHCHECK、
-    `git tag`。首跑结论取不到时明写"未采集"—— 把"文件都在"说成"流水线已跑通"
-    是这份日报最不能犯的错（proposal.md §3.1 v1.13 第 2 条）。
+    版本标签、以及带提交哈希的运行结论。结论取不到时明写"未采集"——
+    把"文件都在"说成"流水线已跑通"是这份日报最不能犯的错（proposal.md §3.1 v1.13）。
     """
     head = f'<span style="font-weight:700;">{_escape(PIPELINE_STAGES)}</span>'
 
@@ -614,8 +615,15 @@ def _pipeline_callout(pipeline: PipelineStatus) -> str:
         details.append("镜像：未配置 Dockerfile")
     details.append("发布：" + ("推送到 ghcr.io" if pipeline.release_to_registry else "未配置镜像仓库发布"))
     if pipeline.latest_tag:
-        details.append("最近发布标签：" + _escape(pipeline.latest_tag))
-    details.append("首跑结果：" + _escape(pipeline.last_run_status or PIPELINE_RUN_UNKNOWN))
+        details.append("最新版本标签：" + _escape(pipeline.latest_tag))
+    # v1.14：结论 + 7 位提交哈希，收件人可据此原样回查；没哈希就只说结论，不留悬空标点
+    if pipeline.last_run_status:
+        run_text = pipeline.last_run_status
+        if pipeline.last_run_commit:
+            run_text += f"，提交 {pipeline.last_run_commit}"
+        details.append("最近一次运行：" + _escape(run_text))
+    else:
+        details.append("最近一次运行：" + _escape(PIPELINE_RUN_UNKNOWN))
 
     muted = "<br>".join(
         f'<span style="color:{EMAIL_FG_2};">{item}</span>' for item in details

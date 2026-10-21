@@ -247,8 +247,15 @@ def run(
         config.report.team_name,
         sources=sources,
         progress=_progress_of(results),
-        # v1.13：交付流水线现状（只读仓库文件与 git tag，不联网、不调 Actions API）
-        pipeline=pipeline_collector.collect(config.report.repo_path),
+        # v1.13：交付流水线现状（仓库文件 + 本地 git 事实）；
+        # v1.14：再读 GitHub 公开接口拿"最近一次运行"的真实结论（不需要 actions:read）
+        pipeline=pipeline_collector.collect(
+            config.report.repo_path,
+            slug=config.github.repos[0] if config.github.repos else "",
+            token=config.github.token,
+            api_base=config.github.api_base,
+            timeout=config.github.timeout,
+        ),
         title=email_title,
     )
 

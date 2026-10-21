@@ -201,3 +201,170 @@ def test_markdown_does_not_get_the_pipeline_block():
     )
 
     assert template.SECTION_PIPELINE not in report.markdown
+
+
+# ------------------------------------------------- v1.14：公开接口取真实运行结论
+
+
+def _run(status: str, conclusion: str | None, sha: str = "4ebbcbf0123456789abcdef") -> dict:
+    return {"status": status, "conclusion": conclusion, "head_sha": sha}
+
+
+def test_check_runs_summary_reports_success_with_the_commit_hash():
+    """全绿 → 「成功（N 项全部通过）」+ 7 位哈希（收件人靠它回查，只有结论＝不可复核）。"""
+    payload = {"check_runs": [_run("completed", "success"), _run("completed", "success")]}
+
+    status, sha = pipeline_collector.check_runs_summary(payload)
+
+    assert status == "成功（2 项全部通过）"
+    assert sha == "4ebbcbf"
+
+
+def test_check_runs_summary_treats_neutral_and_skipped_as_pass():
+    """`neutral`/`skipped` 不该把整条流水线拖成失败；否则跳过可选检查会被误报成红灯。"""
+    payload = {
+        "check_runs": [
+            _run("completed", "success"),
+            _run("completed", "neutral"),
+            _run("completed", "skipped"),
+        ]
+    }
+
+    assert pipeline_collector.check_runs_summary(payload) == ("成功（3 项全部通过）", "4ebbcbf")
+
+
+def test_check_runs_summary_reports_failure():
+    payload = {
+        "check_runs": [
+            _run("completed", "success"),
+            _run("completed", "failure"),
+            _run("completed", "cancelled"),
+        ]
+    }
+
+    assert pipeline_collector.check_runs_summary(payload) == ("失败（2/3 项未通过）", "4ebbcbf")
+
+
+def test_check_runs_summary_reports_in_progress_without_calling_it_success():
+    """还有检查项没跑完时是「进行中」，绝不能被当成"绿了"。"""
+    payload = {"check_runs": [_run("completed", "success"), _run("in_progress", None)]}
+
+    assert pipeline_collector.check_runs_summary(payload) == ("进行中（1/2 项未完成）", "4ebbcbf")
+
+
+def test_check_runs_summary_returns_empty_when_there_is_no_check():
+    """没有检查项就没有结论 —— 不写"成功"，也不写"失败"。"""
+    assert pipeline_collector.check_runs_summary({"check_runs": []}) == ("", "")
+    assert pipeline_collector.check_runs_summary({"total_count": 0}) == ("", "")
+    assert pipeline_collector.check_runs_summary(None) == ("", "")
+
+
+def test_latest_remote_tag_compares_versions_not_strings():
+    """按版本号逐段比较：字典序会把 v1.9.0 排在 v1.10.0 前面，那是错答案。"""
+    payload = [{"name": "v1.9.0"}, {"name": "v1.10.0"}, {"name": "v1.14.0"}, {"name": "nightly"}]
+
+    assert pipeline_collector.latest_remote_tag(payload) == "v1.14.0"
+
+
+def test_latest_remote_tag_is_empty_for_unknown_payload():
+    assert pipeline_collector.latest_remote_tag(None) == ""
+    assert pipeline_collector.latest_remote_tag({"message": "Not Found"}) == ""
+    assert pipeline_collector.latest_remote_tag([{"name": "release-1"}]) == ""
+
+
+def test_collect_reads_the_run_status_and_remote_tag_through_injected_fetch(tmp_dir):
+    """注入假取数函数：三个接口各回一份，采集结果里应出现真实结论与远端标签。"""
+    root = _minimal_repo(tmp_dir)  # 这个仓库本地**没有** tag，标签只能来自远端
+    calls: list[str] = []
+
+    def fake_get(url: str) -> object:
+        calls.append(url)
+        if url.endswith("/repos/o/r"):
+            return {"default_branch": "trunk"}
+        if "/tags" in url:
+            return [{"name": "v1.13.1"}, {"name": "v1.14.0"}]
+        if "/check-runs" in url:
+            return {"check_runs": [_run("completed", "success")]}
+        return None
+
+    status = pipeline_collector.collect(root, slug="o/r", api_base="https://api.example", http_get=fake_get)
+
+    assert status is not None
+    assert status.last_run_status == "成功（1 项全部通过）"
+    assert status.last_run_commit == "4ebbcbf"
+    assert status.latest_tag == "v1.14.0"
+    # 分支要按接口给的默认分支取，而不是硬编码 main
+    assert any("/commits/trunk/check-runs" in url for url in calls)
+
+
+def test_collect_falls_back_to_the_local_tag_when_the_api_is_unavailable(tmp_dir):
+    """接口全挂 → 结论留空（渲染成"未采集"），标签退回本地 git tag，采集本身照样成立。"""
+    root = _minimal_repo(tmp_dir)
+    subprocess.run(["git", "tag", "v9.9.9"], cwd=root, check=True, capture_output=True)
+
+    status = pipeline_collector.collect(
+        root, slug="o/r", api_base="https://api.example", http_get=lambda url: None
+    )
+
+    assert status is not None
+    assert status.last_run_status == "" and status.last_run_commit == ""
+    assert status.latest_tag == "v9.9.9"
+
+
+def test_collect_never_touches_the_network_without_a_repo_slug(tmp_dir):
+    """没配置仓库标识时**一次请求都不发**：离线跑与测试必须是确定性的。"""
+    root = _minimal_repo(tmp_dir)
+
+    def explode(url: str) -> object:  # 被调用就说明越界了
+        raise AssertionError(f"不该联网：{url}")
+
+    status = pipeline_collector.collect(root, http_get=explode)
+
+    assert status is not None
+    assert status.last_run_status == ""
+
+
+# ------------------------------------------------- v1.14：邮件里的呈现
+
+
+def test_email_shows_the_run_conclusion_with_the_commit_hash():
+    members = formatter.aggregate([Member(name="张三", github="zhangsan", lark="zhangsan@company.com")])
+    status = PipelineStatus(
+        ci_workflows=[".github/workflows/workspace-ci.yml"],
+        release_to_registry=True,
+        image_stages=2,
+        image_nonroot=True,
+        image_healthcheck=True,
+        latest_tag="v1.14.0",
+        last_run_status="成功（8 项全部通过）",
+        last_run_commit="4ebbcbf",
+    )
+
+    html = formatter.generate(members, DAY, "平台研发组", pipeline=status).html
+
+    assert "最近一次运行：成功（8 项全部通过），提交 4ebbcbf" in html
+    assert "最新版本标签：v1.14.0" in html
+    assert template.PIPELINE_RUN_UNKNOWN not in html
+
+
+def test_email_omits_the_commit_fragment_when_there_is_no_hash():
+    """没有哈希时只留下结论，不能渲染出「，提交 」这种悬空标点。"""
+    members = formatter.aggregate([Member(name="张三", github="zhangsan", lark="zhangsan@company.com")])
+    status = PipelineStatus(ci_workflows=["a.yml"], last_run_status="失败（1/8 项未通过）")
+
+    html = formatter.generate(members, DAY, "平台研发组", pipeline=status).html
+
+    assert "最近一次运行：失败（1/8 项未通过）" in html
+    assert "，提交 " not in html
+
+
+def test_email_no_longer_claims_the_token_lacks_permission():
+    """v1.14 更正：Check Runs 是公开接口，"令牌没权限"那句是错的说法，不能再出现。"""
+    members = formatter.aggregate([Member(name="张三", github="zhangsan", lark="zhangsan@company.com")])
+
+    html = formatter.generate(
+        members, DAY, "平台研发组", pipeline=PipelineStatus(ci_workflows=["a.yml"])
+    ).html
+
+    assert "actions:read" not in html
+    assert "公开 Check Runs 接口读不到" in html

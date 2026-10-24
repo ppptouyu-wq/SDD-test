@@ -15,7 +15,7 @@ from datetime import date, datetime
 
 from jinja2 import Template
 
-from shared.models import CommitRecord, DailyReport, MemberReport, PipelineStatus, RepoProgress
+from shared.models import DailyReport, MemberReport, PipelineStatus, RepoProgress
 
 NO_RECORD = "今日无记录"
 # 空态文案（v1.10，design.md §6.7(5)）：每个板块说清"空的是什么"。
@@ -537,30 +537,6 @@ def _email_member_bar(name: str) -> str:
     )
 
 
-def _email_commit_item(commit: CommitRecord, subject: str, summary: str) -> str:
-    """一条提交：标题 + 仓库/行数元信息 + 摘要（摘要弱化，design.md §3.3）。"""
-    body = [
-        f'<div style="font-size:14px;font-weight:600;line-height:1.6;color:{EMAIL_FG};">'
-        f"{_escape(subject)}</div>",
-        f'<div style="font-size:12px;color:{EMAIL_FG_2};margin-top:4px;">'
-        f"{_escape(commit.repo)} · "
-        f"+{commit.additions} / -{commit.deletions} · "
-        f"{commit.files_changed} 个文件</div>",
-    ]
-    if summary:
-        body.append(
-            f'<div style="font-size:13px;color:{EMAIL_FG_2};line-height:1.7;margin-top:6px;">'
-            f"{_escape(summary)}</div>"
-        )
-    return (
-        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">'
-        "<tr>"
-        f'<td width="16" valign="top" style="font-size:14px;line-height:1.7;color:{EMAIL_BRAND};">•</td>'
-        f'<td style="padding-bottom:14px;">{"".join(body)}</td>'
-        "</tr></table>"
-    )
-
-
 def _email_plain_list(items: list[str]) -> str:
     rows = "".join(
         f'<div style="font-size:14px;line-height:1.75;color:{EMAIL_FG};margin-top:6px;">'
@@ -788,15 +764,10 @@ def render_email_html(report: DailyReport, *, title: str = "") -> str:
 
         blocks.append(_email_section_title("📝", SECTION_COMMITS))
         if member.commits:
+            # v1.15：只给 per-repo 汇总句（"共提交 N 次，累计 +X/-Y 行"）。
+            # 逐条「主要变更」清单已从邮件渠道撤掉 —— 收件人看的是"做了多少"，
+            # 明细本来就在飞书 Markdown 日报和 Git 历史里（design.md §6.7(5)）。
             blocks.append(_email_callout(_escape(repo_sentence(member))))
-            blocks.append(
-                f'<div style="font-size:14px;font-weight:700;color:{EMAIL_FG};'
-                f'margin:16px 0 10px;">主要变更：</div>'
-            )
-            blocks.extend(
-                _email_commit_item(commit, *summarize_commit(commit.message))
-                for commit in member.commits
-            )
         else:
             blocks.append(
                 _email_callout(
@@ -850,25 +821,7 @@ def render_email_html(report: DailyReport, *, title: str = "") -> str:
                 )
             )
 
-        blocks.append(_email_section_title("💬", SECTION_MESSAGES))
-        if member.messages:
-            blocks.append(
-                _email_plain_list(
-                    [
-                        f'<span style="color:{EMAIL_FG_2};">[{_escape(message.chat_name)}]</span> '
-                        f"{_escape(message.content)}"
-                        for message in member.messages
-                    ]
-                )
-            )
-        else:
-            blocks.append(
-                _email_callout(
-                    NO_MESSAGES, background=EMAIL_NEUTRAL_SOFT, accent=EMAIL_BORDER
-                )
-            )
-
-    return _email_document(
+        return _email_document(
         title or f"{report.team_name} {report.date.isoformat()}",
         "\n".join(blocks),
     )

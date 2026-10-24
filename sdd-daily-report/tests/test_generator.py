@@ -111,10 +111,12 @@ def test_member_without_records_shows_no_record():
     for text in (
         template.NO_COMMITS,
         template.NO_TASKS,
-        template.NO_MESSAGES,
     ):
         assert text in report.markdown
         assert text in report.html
+    # v1.15：协作沟通只在 Markdown 里，邮件的空态跟着板块一起撤掉
+    assert template.NO_MESSAGES in report.markdown
+    assert template.NO_MESSAGES not in report.html
     # 四段空态文案互不相同（用同一句话打发就等于没说明白空的是什么）
     assert len({template.NO_COMMITS, template.NO_TASKS, template.NO_MESSAGES}) == 3
     # 日报正文不再使用展示层口径的通用空态
@@ -590,7 +592,9 @@ def test_email_html_has_the_five_presentation_blocks():
     assert html.index("📌 <strong>今日总结：</strong>") < html.index(template.SECTION_PROGRESS)
     assert html.index(template.SECTION_PROGRESS) < html.index("👤 张三")
     assert "👤 张三" in html
-    assert "主要变更：" in html
+    # v1.15：邮件撤掉「主要变更」逐条清单，只留 per-repo 汇总句
+    assert "主要变更：" not in html
+    assert "共提交 1 次" in html  # repo_sentence 的汇总句仍在
 
 
 def test_email_overview_counts_and_summary_come_from_real_data():
@@ -658,9 +662,53 @@ def test_email_html_marks_failed_sources_and_empty_sections():
     # v1.10：三格各说自己的话（不再统一"今日无记录"），考勤是"数据获取失败"三态里的失败态
     assert template.NO_COMMITS in report.html
     assert template.NO_TASKS in report.html
-    assert template.NO_MESSAGES in report.html
+    # v1.15：邮件不再渲染「协作沟通」板块，所以连它的空态也不该出现
+    assert template.NO_MESSAGES not in report.html
+    assert template.SECTION_MESSAGES not in report.html
     assert template.NO_RECORD not in report.html
     assert template.ATTENDANCE_UNAVAILABLE in report.html
+
+
+# ---------------------------------------------------------------------------
+# v1.15：邮件板块精简（撤掉提交明细与「协作沟通」；design.md §6.7(5)）
+# ---------------------------------------------------------------------------
+
+
+def test_email_drops_commit_detail_list_and_keeps_the_totals_sentence():
+    """邮件只报"几次提交、多少行"，不再逐条列提交标题（proposal.md §3.1 v1.15）。"""
+    report = formatter.generate([_member_with_data()], DAY, "平台研发组")
+    html = report.html
+
+    assert "本日 在 acme/daily-report 仓库共提交 1 次" in html
+    assert "累计 +120/-18 行" in html
+    # 逐条明细的痕迹一个都不该留：标题、元信息里的"个文件"、正文摘要
+    assert "主要变更：" not in html
+    assert "feat: 日报三段式编排" not in html
+    assert "个文件" not in html
+
+
+def test_email_drops_collaboration_section_while_markdown_keeps_it():
+    """渠道差异化：同一份 DailyReport，邮件没有协作沟通，Markdown 与展示页仍有。"""
+    report = formatter.generate([_member_with_data()], DAY, "平台研发组")
+
+    assert template.SECTION_MESSAGES not in report.html
+    assert "项目日报推送时间定在 18:00" not in report.html
+    # Markdown 侧完全不受影响（§3.1 明写"仍保留在飞书 Markdown 日报"）
+    assert "### 协作沟通" in report.markdown
+    assert "项目日报推送时间定在 18:00" in report.markdown
+
+
+def test_email_still_warns_when_message_source_fails_after_dropping_the_section():
+    """不渲染 ≠ 不采集：协作沟通撤了，飞书消息采集失败照样要在顶部如实告警。"""
+    report = formatter.generate(
+        [_member_with_data()],
+        DAY,
+        "平台研发组",
+        sources={"GitHub": True, "飞书任务": True, "飞书消息": False},
+    )
+
+    assert "⚠️ 数据获取失败：飞书消息" in report.html
+    assert template.SECTION_MESSAGES not in report.html
 
 
 # ---------------------------------------------------------------------------

@@ -437,6 +437,30 @@ def _datetime_text(value: datetime | None) -> str:
     return value.strftime("%Y-%m-%d %H:%M") if value is not None else ""
 
 
+def _weekday_text(day: date) -> str:
+    """中文星期（v1.18，design.md §6.7(2) 第 1 段）。
+
+    手写映射而不用 `strftime("%A")`：`%A` 取决于运行环境的 locale，
+    容器里通常是 C locale，会渲染成 `Saturday` —— 中英混排比不写还难看。
+    """
+    return "星期" + "一二三四五六日"[day.weekday()]
+
+
+def _generated_text(report: DailyReport) -> str:
+    """标题区日期胶囊右侧的「生成于 …」（v1.18，design.md §6.7(2) 第 1 段）。
+
+    默认只写时分：日期已经在上面的胶囊里，再写一遍是重复。只有生成日与日报日
+    不是同一天时（补跑昨天的日报、跨零点生成）才写完整的 `YYYY-MM-DD HH:MM`，
+    否则「生成于 00:12」会被读成日报当天的 00:12。
+    """
+    value = report.generated_at
+    if value is None:
+        return ""
+    if value.date() == report.date:
+        return value.strftime("%H:%M")
+    return value.strftime("%Y-%m-%d %H:%M")
+
+
 def overview_counts(report: DailyReport) -> tuple[int, int, int]:
     """当日团队级三项计数：代码提交 / 任务更新 / 协作讨论（design.md §6.7(2)）。"""
     commits = sum(len(member.commits) for member in report.members)
@@ -724,24 +748,41 @@ def render_email_html(report: DailyReport, *, title: str = "") -> str:
     day_text = _escape(report.date.isoformat())
     blocks: list[str] = []
 
-    # ---- 1. 标题区（v1.7：报告名与日期同行，生成时间靠右；v1.11：title 传入时与主题同源）----
+    # ---- 1. 标题区（v1.7：报告名与日期同区；v1.11：title 传入时与主题同源；
+    #      v1.18：改浅青标题卡 + 日期胶囊，把日期从主题串里"视觉拎出来"）----
     if title:
         heading = _escape(title)
     else:
+        # 不传 title 时退回 v1.7 的形态：报告名 + 日期同行（此时标题里没有日期）
         heading = (
             f"{_escape(report.team_name)}"
             f'<span style="font-size:13px;font-weight:400;color:{EMAIL_FG_2};">　{day_text}</span>'
         )
+    generated = _generated_text(report)
+    date_chip = (
+        f"{day_text}　{_weekday_text(report.date)}"
+        if title
+        else f"{_weekday_text(report.date)}"
+    )
     blocks.append(
-        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">'
-        "<tr>"
-        f'<td valign="bottom" style="font-size:23px;line-height:1.3;font-weight:700;'
-        f'color:{EMAIL_BRAND_DEEP};">{heading}</td>'
-        f'<td valign="bottom" align="right" style="font-size:12px;'
-        f'color:{EMAIL_FOOTER_FG};white-space:nowrap;">'
-        f"生成于 {_escape(_datetime_text(report.generated_at))}</td>"
-        "</tr></table>"
-        f'<div style="height:1px;background:{EMAIL_BORDER};margin:14px 0 0;"></div>'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"'
+        f' style="background:{EMAIL_BRAND_SOFT};border-radius:10px;">'
+        '<tr><td style="padding:16px 18px;">'
+        f'<div style="font-size:20px;line-height:1.35;font-weight:700;'
+        f'color:{EMAIL_BRAND_DEEP};">{heading}</div>'
+        '<div style="height:10px;font-size:0;line-height:0;">&nbsp;</div>'
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+        f'<td style="background:{EMAIL_BRAND};border-radius:999px;padding:5px 14px;'
+        f'font-size:14px;line-height:1.4;font-weight:700;color:{EMAIL_CONTENT_BG};'
+        f'letter-spacing:0.5px;white-space:nowrap;">{date_chip}</td>'
+        + (
+            f'<td style="padding-left:12px;font-size:12px;color:{EMAIL_FG_2};'
+            f'white-space:nowrap;">生成于 {_escape(generated)}</td>'
+            if generated
+            else ""
+        )
+        + "</tr></table></td></tr></table>"
+        '<div style="height:16px;font-size:0;line-height:0;">&nbsp;</div>'
     )
 
     # 采集失败的来源必须显式列出，严禁静默跳过（§6.1）

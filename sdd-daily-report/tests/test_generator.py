@@ -979,7 +979,8 @@ def test_email_header_title_is_the_subject_when_provided():
     report = formatter.generate([_member_with_data()], DAY, "平台研发组", title=title)
 
     assert title == "研一张三2026-08-20智能日报"
-    assert f">{title}</td>" in report.html
+    # v1.18：标题从 <td> 搬进了标题卡的 <div>，但"原样呈现标题"这条没变
+    assert f">{title}</div>" in report.html
     assert f"<title>{title}</title>" in report.html
     # 标题里本来就含日期，不能再挂一个日期片段（否则会读成两个名字）
     assert f"{title}<span" not in report.html
@@ -1179,3 +1180,45 @@ def test_email_puts_the_engineering_progress_block_last():
     assert html.rfind(template.SECTION_PROGRESS) > html.rfind(template.SECTION_TASKS)
     assert html.rfind(template.SECTION_PROGRESS) > html.rfind("考勤")
 
+
+# ---- v1.18：标题区把日期"视觉拎出来"（proposal.md §3.1、design.md §6.7(2) 第 1 段）----
+# 触发：收件人反馈「主题里日期夹在名字和『智能日报』中间，一眼看不出这是哪天的」。
+
+
+def test_email_header_shows_a_date_chip_with_weekday():
+    """标题行之下必须有「YYYY-MM-DD 星期X」的日期胶囊，而不是把日期只埋在主题串里。"""
+    report = formatter.generate(
+        [_member_with_data()], DAY, "平台研发组", title="研一张三2026-08-20智能日报"
+    )
+
+    assert f"{DAY.isoformat()}　星期四" in report.html
+    # 胶囊是深青实底 + 圆角，颜色取自 §6.7(1) 白名单
+    assert f"background:{template.EMAIL_BRAND};border-radius:999px" in report.html
+    assert template.EMAIL_BRAND in template.EMAIL_PALETTE
+
+
+def test_email_header_generated_time_is_hour_and_minute_on_the_same_day():
+    """同一天生成时只写时分：日期已经在胶囊里，再写一遍纯属重复。"""
+    html = template.render_email_html(
+        _bare_report([_member_with_data()]), title="平台研发组 2026-08-20"
+    )
+
+    assert "生成于 18:00" in html
+    assert "生成于 2026-08-20 18:00" not in html
+
+
+def test_email_header_generated_time_includes_the_date_when_the_day_differs():
+    """补跑昨天的日报（跨零点）时必须写全日期，否则「00:12」会被读成日报当天的时间。"""
+    report = DailyReport(
+        date=DAY,
+        team_name="平台研发组",
+        members=[_member_with_data()],
+        generated_at=datetime(2026, 8, 21, 0, 12),
+        markdown="",
+        html="",
+        sources={},
+    )
+
+    html = template.render_email_html(report, title="平台研发组 2026-08-20")
+
+    assert "生成于 2026-08-21 00:12" in html

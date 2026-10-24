@@ -91,7 +91,8 @@ def test_email_subject_and_header_title_come_from_the_same_rendering(config):
         owner=config.email.owner,
     )
 
-    assert f">{expected}</td>" in row["html"]
+    # v1.18：标题搬进了标题卡的 <div>（原来是 <td>），但"正文标题 == 邮件主题"这条不变
+    assert f">{expected}</div>" in row["html"]
     assert f"<title>{expected}</title>" in row["html"]
 
 

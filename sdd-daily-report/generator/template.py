@@ -776,30 +776,13 @@ def render_email_html(report: DailyReport, *, title: str = "") -> str:
         )
     )
 
-    # ---- 4. 今日工程进展（v1.8，团队级；见 design.md §6.8）----
-    blocks.append(_email_section_title("🔧", SECTION_PROGRESS))
-    if report.progress is not None:
-        blocks.append(_progress_callout(report.progress))
-    else:
-        # 本机取不到仓库信息不是故障：中性空态，不写成"采集失败"、不进 sources
-        blocks.append(
-            _email_callout(
-                PROGRESS_EMPTY, background=EMAIL_NEUTRAL_SOFT, accent=EMAIL_BORDER
-            )
-        )
-
-    # ---- 4.5 交付流水线（v1.13 新增；v1.16 起默认关闭，见 design.md §6.7(6)）----
-    # v1.16：`report.pipeline is None` 表示"这个板块本期不展示"（开关关闭，或本机取不到
-    # 仓库信息），此时**整块不出现** —— 旧版会补一句「未记录交付流水线」，读者分不清
-    # 那是"没做"还是"没读到"，反而更像一条失败告警。
-    # 仓库存在但没有工作流文件的情形仍然由 _pipeline_callout 内部说明「未配置」。
-    if report.pipeline is not None:
-        blocks.append(_email_section_title("🚚", SECTION_PIPELINE))
-        blocks.append(_pipeline_callout(report.pipeline))
-
-    # ---- 5. 按成员分组 ----
+    # ---- 4. 按成员分组（v1.17：只有一个成员时不画成员名条）----
+    # 单人日报里「我（网页端）」这类标签是纯噪音 —— 主题与标题区已经写着这是谁的日报，
+    # 正文再标一次只是多一行灰字。多成员时名条仍然必需，否则各段分不清是谁的。
+    single_member = len(report.members) == 1
     for member in report.members:
-        blocks.append(_email_member_bar(member.name))
+        if not single_member:
+            blocks.append(_email_member_bar(member.name))
 
         blocks.append(_email_section_title("📝", SECTION_COMMITS))
         if member.commits:
@@ -862,7 +845,33 @@ def render_email_html(report: DailyReport, *, title: str = "") -> str:
                 )
             )
 
-        return _email_document(
+    # ---- 5. 今日工程进展（v1.8，团队级；见 design.md §6.8）----
+    # v1.17：整块挪到邮件最末 —— 它是"这个项目做到哪一步"的团队级背景，
+    # 收件人先看"今天我做了什么"，再看项目整体进度更顺。
+    blocks.append(_email_section_title("🔧", SECTION_PROGRESS))
+    if report.progress is not None:
+        blocks.append(_progress_callout(report.progress))
+    else:
+        # 本机取不到仓库信息不是故障：中性空态，不写成"采集失败"、不进 sources
+        blocks.append(
+            _email_callout(
+                PROGRESS_EMPTY, background=EMAIL_NEUTRAL_SOFT, accent=EMAIL_BORDER
+            )
+        )
+
+    # ---- 5.5 交付流水线（v1.13 新增；v1.16 起默认关闭，见 design.md §6.7(6)）----
+    # v1.16：`report.pipeline is None` 表示"这个板块本期不展示"（开关关闭，或本机取不到
+    # 仓库信息），此时**整块不出现** —— 旧版会补一句「未记录交付流水线」，读者分不清
+    # 那是"没做"还是"没读到"，反而更像一条失败告警。
+    # 仓库存在但没有工作流文件的情形仍然由 _pipeline_callout 内部说明「未配置」。
+    if report.pipeline is not None:
+        blocks.append(_email_section_title("🚚", SECTION_PIPELINE))
+        blocks.append(_pipeline_callout(report.pipeline))
+
+    # v1.17 缺陷修复：这里的 return 曾经缩进在 for 循环里（v1.15 删「协作沟通」板块时
+    # 带出来的），于是多成员日报只渲染第一个人、后面的成员整段消失 —— 单成员配置下
+    # 完全看不出来，一旦加大成员就静默丢数据。
+    return _email_document(
         title or f"{report.team_name} {report.date.isoformat()}",
         "\n".join(blocks),
     )

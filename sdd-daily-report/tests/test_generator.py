@@ -580,9 +580,16 @@ def test_html_keeps_each_commit_visually_separated():
 
 
 def test_email_html_has_the_five_presentation_blocks():
-    """标题区 / 今日概览 / 今日总结 / 今日工程进展（v1.8）/ 按成员分组，五段都要在。"""
+    """标题区 / 今日概览 / 今日总结 / 按成员分组 / 今日工程进展（v1.8），五段都要在。
+
+    v1.17：顺序改成「成员分组」在前、「今日工程进展」在最后；单人日报不画成员名条，
+    所以这里改用两位成员来验证名条与顺序。
+    """
     report = formatter.generate(
-        [_member_with_data()], DAY, "平台研发组", progress=_progress()
+        [_member_with_data(), _member_with_data("李四", "lisi")],
+        DAY,
+        "平台研发组",
+        progress=_progress(),
     )
     html = report.html
 
@@ -592,11 +599,12 @@ def test_email_html_has_the_five_presentation_blocks():
     assert "生成于 " in html
     assert "📊 今日概览" in html
     assert "📌 <strong>今日总结：</strong>" in html
-    # v1.8：工程进展段夹在「今日总结」与成员分组之间
-    assert template.SECTION_PROGRESS in html
-    assert html.index("📌 <strong>今日总结：</strong>") < html.index(template.SECTION_PROGRESS)
-    assert html.index(template.SECTION_PROGRESS) < html.index("👤 张三")
     assert "👤 张三" in html
+    assert "👤 李四" in html
+    # v1.17：工程进展挪到成员分组之后（全篇最末）
+    assert template.SECTION_PROGRESS in html
+    assert html.index("📌 <strong>今日总结：</strong>") < html.index("👤 张三")
+    assert html.index("👤 张三") < html.index(template.SECTION_PROGRESS)
     # v1.15：邮件撤掉「主要变更」逐条清单，只留 per-repo 汇总句
     assert "主要变更：" not in html
     assert "共提交 1 次" in html  # repo_sentence 的汇总句仍在
@@ -741,8 +749,13 @@ def test_email_html_only_uses_the_design_palette():
 
 
 def test_email_html_uses_the_teal_identity_and_member_bar():
-    """v1.7 换色：身份色是青碧；计数卡是浅青底 + 顶部深青条；成员分组用整宽名条。"""
-    report = formatter.generate([_member_with_data()], DAY, "平台研发组")
+    """v1.7 换色：身份色是青碧；计数卡是浅青底 + 顶部深青条；多成员时用整宽名条。
+
+    v1.17：单人日报不再画名条，所以名条这条断言改用两位成员来验。
+    """
+    report = formatter.generate(
+        [_member_with_data(), _member_with_data("李四", "lisi")], DAY, "平台研发组"
+    )
     html = report.html
 
     assert template.EMAIL_BRAND == "#0f766e"
@@ -1103,4 +1116,66 @@ def test_task_empty_state_still_says_no_tasks_when_collection_succeeded():
     assert template.TASKS_UNAVAILABLE not in report.markdown
     assert template.TASKS_UNAVAILABLE not in report.html
 
+def _bare_report(members: list[MemberReport]) -> DailyReport:
+    """直接构造 DailyReport，绕过 formatter.generate 对空成员列表的校验。"""
+    return DailyReport(
+        date=DAY,
+        team_name="平台研发组",
+        members=members,
+        generated_at=datetime(2026, 8, 20, 18, 0),
+        markdown="",
+        html="",
+        sources={},
+    )
+
+
+def test_email_omits_the_member_bar_when_there_is_only_one_member():
+    """v1.17：单人日报不画成员名条。
+
+    「我（网页端）」这类标签在只有一个人的日报里纯属噪音 —— 主题与标题区已经写着
+    这是谁的日报。这里刻意用**不在标题里出现**的名字（张三），否则断言无从区分
+    "名条被去掉了"和"名字本来就在标题里"。
+    """
+    report = formatter.generate([_member_with_data()], DAY, "平台研发组")
+
+    assert "张三" not in report.html
+    # 只去掉名条，不是把这个人整段删掉
+    assert template.SECTION_COMMITS in report.html
+    assert "共提交 1 次" in _plain(report.html)
+
+
+def test_email_renders_every_member_when_there_are_several():
+    """v1.17 缺陷修复：v1.15 起 return 落在循环里，第二个成员整段消失。
+
+    当时 config.yaml 只有一个成员，所以多成员路径既没被测过、也没被真跑过。
+    """
+    report = _bare_report(
+        [_member_with_data("张三"), _member_with_data("李四", "lisi")]
+    )
+
+    html = template.render_email_html(report, title="平台研发组 2026-08-20")
+
+    assert html.count("张三") >= 1
+    assert html.count("李四") >= 1
+    # 两个人各自带一段「代码提交」
+    assert html.count(template.SECTION_COMMITS) >= 2
+
+
+def test_email_does_not_return_none_for_an_empty_member_list():
+    """同一个缺陷的另一面：成员为空时旧代码根本没走到 return，函数返回 None。"""
+    html = template.render_email_html(_bare_report([]), title="平台研发组 2026-08-20")
+
+    assert html
+    assert template.SECTION_PROGRESS in html
+
+
+def test_email_puts_the_engineering_progress_block_last():
+    """v1.17：先看「今天我做了什么」，再看「项目整体到哪一步」。"""
+    report = formatter.generate(
+        [_member_with_data()], DAY, "平台研发组", progress=_progress()
+    )
+
+    html = report.html
+    assert html.rfind(template.SECTION_PROGRESS) > html.rfind(template.SECTION_TASKS)
+    assert html.rfind(template.SECTION_PROGRESS) > html.rfind("考勤")
 

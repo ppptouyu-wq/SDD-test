@@ -366,13 +366,15 @@
     if (!tasks.length) return void seg.appendChild(noRecordNode());
     for (var i = 0; i < tasks.length; i++) {
       var task = tasks[i] || {};
+      var done = task.status === "done";
       var meta = [];
-      meta.push(el("span", "st-from", clearText(task.status_from)));
-      meta.push(el("span", "st-arrow", "→"));
-      meta.push(el("span", "st-to", clearText(task.status_to)));
-      if (task.updated_at) {
+      // v1.16：飞书只给任务当前状态（todo/done）与时间戳，没有状态流转，
+      // 所以这里画「已完成 / 未完成」+ 对应日期，而不是旧版的「A → B」。
+      meta.push(el("span", done ? "st-to" : "st-from", done ? "已完成" : "未完成"));
+      var stamp = done ? (task.completed_at || task.updated_at) : (task.due_at || task.updated_at);
+      if (stamp) {
         meta.push(sepNode());
-        meta.push(document.createTextNode(timeOf(task.updated_at)));
+        meta.push(document.createTextNode(timeOf(stamp)));
       }
       seg.appendChild(itemNode(task.title, meta));
     }

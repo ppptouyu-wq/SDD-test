@@ -95,8 +95,10 @@ def _report(
                 TaskRecord(
                     assignee="张三",
                     title="展示层接口联调",
-                    status_from="进行中",
-                    status_to="已完成",
+                    status="done",
+                    created_at=datetime(2026, 9, 30, 10, 0),
+                    due_at=None,
+                    completed_at=datetime(2026, 9, 30, 17, 30),
                     updated_at=datetime(2026, 9, 30, 18, 0),
                 )
             ],
@@ -415,7 +417,8 @@ def test_member_carries_the_four_fixed_sections(ro):
     assert member.commits[0].repo == "acme/daily-report"
     assert member.commits[0].additions == 120
     assert member.tasks[0].title == "展示层接口联调"
-    assert member.tasks[0].status_to == "已完成"
+    assert member.tasks[0].status == "done"
+    assert member.tasks[0].completed_at is not None
     assert member.messages[0].sender == "张三"
     assert member.messages[0].chat_name == "项目群"
     assert member.attendance is not None

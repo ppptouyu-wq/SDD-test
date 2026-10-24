@@ -109,6 +109,27 @@ def test_member_lookup_by_github_and_lark(tmp_dir):
     assert config.member_by_github("nobody") is None
 
 
+def test_show_pipeline_defaults_to_off(tmp_dir):
+    """v1.16：没写这个键时板块默认关闭。
+
+    默认值写错（比如漏成 True）不会有任何测试变红 —— 邮件里会多出一整块
+    别人根本不关心的"课程作业进度"，所以这条断言必须钉住默认值。
+    """
+    path = tmp_dir / "config.yaml"
+    path.write_text(MINIMAL_YAML, encoding="utf-8")
+
+    assert load_config(path).email.show_pipeline is False
+
+
+def test_show_pipeline_can_be_turned_on(tmp_dir):
+    path = tmp_dir / "config.yaml"
+    path.write_text(
+        MINIMAL_YAML + '\nemail:\n  show_pipeline: true\n', encoding="utf-8"
+    )
+
+    assert load_config(path).email.show_pipeline is True
+
+
 # ---------------- logger ----------------
 
 def test_logger_emits_json_lines():

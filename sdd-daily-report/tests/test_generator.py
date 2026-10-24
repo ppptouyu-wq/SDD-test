@@ -54,7 +54,10 @@ def _member_with_data(name: str = "张三", github: str = "zhangsan") -> MemberR
         tasks=[
             TaskRecord(
                 assignee="lark_1", title="日报模板评审",
-                status_from="进行中", status_to="已完成",
+                status="done",
+                created_at=datetime(2026, 8, 20, 9, 40),
+                due_at=None,
+                completed_at=datetime(2026, 8, 20, 16, 30),
                 updated_at=datetime(2026, 8, 20, 16, 30),
             )
         ],
@@ -270,8 +273,8 @@ def test_aggregate_maps_records_to_members_by_identity(config, ts):
     ])
     tasks = CollectResult.ok([
         TaskRecord(
-            assignee="lisi@company.com", title="联调", status_from="待开始",
-            status_to="进行中", updated_at=ts(12),
+            assignee="lisi@company.com", title="联调", status="todo",
+            created_at=ts(10), due_at=None, completed_at=None, updated_at=ts(12),
         )
     ])
     messages = CollectResult.ok([
@@ -383,8 +386,10 @@ def test_aggregate_keeps_open_id_matching_separate_from_employee_id():
         TaskRecord(
             assignee="ou_lisi",
             title="联调",
-            status_from="待开始",
-            status_to="进行中",
+            status="todo",
+            created_at=datetime(2026, 10, 9, 9, 0),
+            due_at=None,
+            completed_at=None,
             updated_at=datetime(2026, 10, 9, 11, 0),
         )
     ])
@@ -974,5 +979,74 @@ def test_email_header_falls_back_to_team_name_and_date_without_title():
 
     assert ">平台研发组<span" in report.html
     assert "<title>平台研发组 2026-08-20</title>" in report.html
+
+
+# ---------------- v1.16：任务行 = 真实字段（design.md §3.6、§6.7(5)）----------------
+
+
+def _mock_member_with_tasks() -> MemberReport:
+    """一个成员 + 两条任务：一条已完成、一条未完成（带截止日期）。"""
+    return MemberReport(
+        name="张三",
+        github_username="zhangsan",
+        commits=[],
+        tasks=[
+            TaskRecord(
+                assignee="ou_zhangsan",
+                title="写周报",
+                status="done",
+                created_at=datetime(2026, 8, 19, 9, 0),
+                due_at=None,
+                completed_at=datetime(2026, 8, 20, 16, 30),
+                updated_at=datetime(2026, 8, 20, 16, 30),
+            ),
+            TaskRecord(
+                assignee="ou_zhangsan",
+                title="联调接口",
+                status="todo",
+                created_at=datetime(2026, 8, 18, 10, 0),
+                due_at=datetime(2026, 8, 22, 18, 0),
+                completed_at=None,
+                updated_at=datetime(2026, 8, 20, 11, 0),
+            ),
+        ],
+        messages=[],
+    )
+
+
+def test_task_line_renders_title_date_and_completion():
+    """标题｜创建 MM-DD｜已完成/未完成：三件事各自都在（design.md §3.6）。"""
+    done, todo = _mock_member_with_tasks().tasks
+
+    assert template.task_line(done) == "写周报｜创建 08-19｜已完成 08-20"
+    assert template.task_line(todo) == "联调接口｜创建 08-18｜未完成｜截止 08-22"
+
+
+def test_task_line_falls_back_when_dates_are_missing():
+    """时间戳缺失时不留"None"，也不留悬空分隔符。"""
+    bare = TaskRecord(
+        assignee="ou_x",
+        title="无时间任务",
+        status="todo",
+        created_at=None,
+        due_at=None,
+        completed_at=None,
+        updated_at=datetime(2026, 8, 20, 9, 0),
+    )
+
+    assert template.task_line(bare) == "无时间任务｜未完成"
+
+
+def test_markdown_and_email_show_tasks_with_completion_state():
+    """Markdown 与邮件两条路径都画同一份任务行，读者看到的是"做完没有"。"""
+    report = formatter.generate([_mock_member_with_tasks()], DAY, "平台研发组")
+
+    assert "- 写周报｜创建 08-19｜已完成 08-20" in report.markdown
+    assert "- 联调接口｜创建 08-18｜未完成｜截止 08-22" in report.markdown
+    assert "写周报｜创建 08-19｜已完成 08-20" in report.html
+    assert "联调接口｜创建 08-18｜未完成｜截止 08-22" in report.html
+    # 旧版的"状态流转"写法必须彻底消失
+    assert "进行中 →" not in report.markdown
+    assert "→ 已完成" not in report.html
 
 

@@ -15,14 +15,16 @@ from datetime import date, datetime
 
 from jinja2 import Template
 
-from shared.models import DailyReport, MemberReport, PipelineStatus, RepoProgress
+from shared.models import DailyReport, MemberReport, PipelineStatus, RepoProgress, TaskRecord
 
 NO_RECORD = "今日无记录"
 # 空态文案（v1.10，design.md §6.7(5)）：每个板块说清"空的是什么"。
 # 统一写一句"今日无记录"的问题是读者看不出到底缺什么 —— 四格长得一模一样，
 # 一份空日报等于什么都没说。NO_RECORD 保留给展示层口径的旧调用，日报正文不再用它。
 NO_COMMITS = "当日无代码提交"
-NO_TASKS = "当日无任务状态变更"
+# v1.16：任务口径从"状态流转"改成"任务本身"（飞书只给当前状态，没有流转历史），
+# 空态也就跟着从"当日无任务状态变更"改成"当日无任务新建、更新或完成"。
+NO_TASKS = "当日无任务新建、更新或完成"
 NO_ATTENDANCE_RECORD = "当日无打卡记录"
 NO_MESSAGES = "当日无符合条件的讨论"
 FETCH_FAILED = "数据获取失败"
@@ -203,7 +205,7 @@ def render_markdown(
         lines.append(f"### {SECTION_TASKS}")
         if member.tasks:
             for task in member.tasks:
-                lines.append(f"- {task.title}：{task.status_from} → {task.status_to}")
+                lines.append(f"- {task_line(task)}")
         else:
             lines.append(f"- {NO_TASKS}")
         lines.append("")
@@ -523,6 +525,29 @@ def _email_change_line(added: int, removed: int) -> str:
     )
 
 
+def task_line(task: TaskRecord) -> str:
+    """一条任务在日报里的显示行（v1.16，design.md §6.7(5)）。
+
+    形如「写周报｜创建 10-24｜未完成」「写周报｜创建 10-24｜已完成 10-25」。
+
+    为什么是这三段：飞书任务接口只返回任务**当前**状态（`todo`/`done`）与三个时间戳，
+    没有状态流转历史。所以日报能说清的事实只有三件 —— 是什么任务、什么时候建的、
+    做完没有（做完的补完成日期，没做完的补截止日期）。旧版写成
+    「进行中 → 已完成」那种流转，在真实数据里两个值都是空串。
+    """
+    parts = [task.title or "（无标题任务）"]
+    if task.created_at is not None:
+        parts.append(f"创建 {task.created_at:%m-%d}")
+    if task.done:
+        finished = task.completed_at or task.updated_at
+        parts.append(f"已完成 {finished:%m-%d}")
+    else:
+        parts.append("未完成")
+        if task.due_at is not None:
+            parts.append(f"截止 {task.due_at:%m-%d}")
+    return "｜".join(parts)
+
+
 def _email_member_bar(name: str) -> str:
     """成员名条（v1.7）：整宽浅青底 + 深青粗体，比裸文字更像"分区"。
 
@@ -560,7 +585,6 @@ PROGRESS_EMPTY = "今日未记录工程进展"
 
 # 交付流水线板块（v1.13，design.md §3.5 / §6.7(6)；v1.14 增真实运行结论）
 SECTION_PIPELINE = "交付流水线"
-PIPELINE_EMPTY = "未记录交付流水线"
 PIPELINE_STAGES = "测试门禁 ──▶ 镜像构建 ──▶ 发布到镜像仓库 ──▶ 部署（本期不做）"
 # 结论读不到时明写"未采集"。v1.14 更正了原因：Check Runs 是公开接口，
 # 读不到只可能是网络/限流/没配仓库标识，不再拿"令牌没权限"当挡箭牌。
@@ -746,17 +770,14 @@ def render_email_html(report: DailyReport, *, title: str = "") -> str:
             )
         )
 
-    # ---- 4.5 交付流水线（v1.13，团队级；见 design.md §3.5、§6.7(6)）----
-    blocks.append(_email_section_title("🚚", SECTION_PIPELINE))
+    # ---- 4.5 交付流水线（v1.13 新增；v1.16 起默认关闭，见 design.md §6.7(6)）----
+    # v1.16：`report.pipeline is None` 表示"这个板块本期不展示"（开关关闭，或本机取不到
+    # 仓库信息），此时**整块不出现** —— 旧版会补一句「未记录交付流水线」，读者分不清
+    # 那是"没做"还是"没读到"，反而更像一条失败告警。
+    # 仓库存在但没有工作流文件的情形仍然由 _pipeline_callout 内部说明「未配置」。
     if report.pipeline is not None:
+        blocks.append(_email_section_title("🚚", SECTION_PIPELINE))
         blocks.append(_pipeline_callout(report.pipeline))
-    else:
-        # 仓库里没有工作流/镜像/标签：中性空态，不写成"流水线失败"
-        blocks.append(
-            _email_callout(
-                PIPELINE_EMPTY, background=EMAIL_NEUTRAL_SOFT, accent=EMAIL_BORDER
-            )
-        )
 
     # ---- 5. 按成员分组 ----
     for member in report.members:
@@ -778,13 +799,7 @@ def render_email_html(report: DailyReport, *, title: str = "") -> str:
         blocks.append(_email_section_title("✅", SECTION_TASKS))
         if member.tasks:
             blocks.append(
-                _email_plain_list(
-                    [
-                        f"{_escape(task.title)}：{_escape(task.status_from)} → "
-                        f"{_escape(task.status_to)}"
-                        for task in member.tasks
-                    ]
-                )
+                _email_plain_list([_escape(task_line(task)) for task in member.tasks])
             )
         else:
             blocks.append(

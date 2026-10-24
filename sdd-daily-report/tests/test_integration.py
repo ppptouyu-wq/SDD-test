@@ -37,10 +37,12 @@ GH_COMMIT = {
 
 LARK_TASK = {
     "summary": "日报模板评审",
-    "status": "已完成",
-    "status_from": "进行中",
+    # v1.16：与飞书真实字段对齐（status 只有 todo/done，另带三个毫秒时间戳）
+    "status": "done",
+    "created_at": "2026-08-20T09:40:00+08:00",
+    "completed_at": "2026-08-20T16:30:00+08:00",
     "updated_at": "2026-08-20T16:30:00+08:00",
-    "assignees": [{"id": "lisi@company.com"}],
+    "assignees": [{"id": "lisi@company.com", "type": "user"}],
 }
 
 LARK_MESSAGE = {
@@ -90,7 +92,7 @@ def _wire_all_sources(monkeypatch, config, *, github_ok=True, lark_task_ok=True,
             )
         ])
 
-    def lark_task_collect(project_id, since, until, *, config, client=None,
+    def lark_task_collect(since, until, *, config, client=None,
                           token_manager=None, sleep=None):  # noqa: ANN001
         from shared.models import CollectResult, TaskRecord
 
@@ -99,7 +101,10 @@ def _wire_all_sources(monkeypatch, config, *, github_ok=True, lark_task_ok=True,
         return CollectResult.ok([
             TaskRecord(
                 assignee="lisi@company.com", title="日报模板评审",
-                status_from="进行中", status_to="已完成",
+                status="done",
+                created_at=datetime(2026, 8, 20, 9, 40, tzinfo=TZ),
+                due_at=None,
+                completed_at=datetime(2026, 8, 20, 16, 30, tzinfo=TZ),
                 updated_at=datetime(2026, 8, 20, 16, 30, tzinfo=TZ),
             )
         ])

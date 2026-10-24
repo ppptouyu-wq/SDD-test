@@ -84,6 +84,10 @@ class EmailConfig:
     subject_pattern: str = "{team_name} {date}"
     grade: str = ""  # 年级，供主题模板使用（个人属性只走配置，不硬编码）
     owner: str = ""  # 姓名，供主题模板使用
+    # ---- v1.16：「交付流水线」板块开关（design.md §6.7(6)）----
+    # 默认 False：默认不采集、不渲染。为 True 时行为与 v1.14 完全一致。
+    # 放在 email 段而不是 report 段：这个板块只出现在邮件渠道，展示页从来没有它。
+    show_pipeline: bool = False
 
 
 @dataclass(frozen=True)
@@ -208,6 +212,8 @@ def load_config(path: str | Path) -> AppConfig:
         subject_pattern=str(raw_email.get("subject_pattern", "") or "{team_name} {date}"),
         grade=str(raw_email.get("grade", "") or ""),
         owner=str(raw_email.get("owner", "") or ""),
+        # v1.16：「交付流水线」板块开关，默认关闭（design.md §6.7(6)）
+        show_pipeline=bool(raw_email.get("show_pipeline", False)),
     )
 
     # ---- report ----

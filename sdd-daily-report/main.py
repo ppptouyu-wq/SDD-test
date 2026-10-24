@@ -22,8 +22,11 @@ from collections.abc import Callable
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 
+import httpx
+
 from collector import github as github_collector
 from collector import lark_attendance, lark_msg, lark_task, pipeline as pipeline_collector, repo_progress
+from collector.lark_auth import DEFAULT_TOKEN_FILE, UserTokenManager
 from generator import formatter, template
 from notifier import email as email_notifier
 from notifier import lark_bot
@@ -134,9 +137,7 @@ def collect_all(
             SOURCE_LARK_TASK: (
                 load_tasks_file(tasks_file, day)
                 if tasks_file
-                else lark_task.collect(
-                    config.lark.project_id, since, until, config=config.lark
-                )
+                else _collect_tasks(config, since, until)
             ),
             SOURCE_LARK_MSG: lark_msg.collect(
                 config.lark.chat_id,
@@ -249,12 +250,18 @@ def run(
         progress=_progress_of(results),
         # v1.13：交付流水线现状（仓库文件 + 本地 git 事实）；
         # v1.14：再读 GitHub 公开接口拿"最近一次运行"的真实结论（不需要 actions:read）
-        pipeline=pipeline_collector.collect(
-            config.report.repo_path,
-            slug=config.github.repos[0] if config.github.repos else "",
-            token=config.github.token,
-            api_base=config.github.api_base,
-            timeout=config.github.timeout,
+        pipeline=(
+            pipeline_collector.collect(
+                config.report.repo_path,
+                slug=config.github.repos[0] if config.github.repos else "",
+                token=config.github.token,
+                api_base=config.github.api_base,
+                timeout=config.github.timeout,
+            )
+            # v1.16：板块开关默认关。关掉时连这两次 HTTP 都不发 —— 不采集就不会渲染，
+            # 也不会因为读不到而生成一句误导人的"未记录交付流水线"（design.md §6.7(6)）。
+            if config.email.show_pipeline
+            else None
         ),
         title=email_title,
     )
@@ -324,6 +331,29 @@ def health_check(config: AppConfig) -> dict[str, bool]:
     return checks
 
 
+def _collect_tasks(config: AppConfig, since: datetime, until: datetime) -> CollectResult[TaskRecord]:
+    """采集飞书「我负责的」任务（v1.16）。
+
+    身份选择是这段的全部要点：`GET /task/v2/tasks` 只接受 `user_access_token`。
+    没有授权落盘文件时**不请求、直接失败**并给出授权命令 —— 应用身份调它不会报错，
+    只会返回 0 条，"读不到"于是被写成"今日无任务"，比报错更难发现。
+    """
+    token_file = Path(config.lark.user_token_file)
+    if not token_file.exists():
+        # 交给采集层产出失败结论与提示文案（单一来源，见 lark_task.collect）。
+        return lark_task.collect(since, until, config=config.lark, token_manager=None)
+    with httpx.Client(base_url=config.lark.api_base, timeout=config.lark.timeout) as client:
+        manager = UserTokenManager(
+            client,
+            config.lark.app_id,
+            config.lark.app_secret,
+            token_file=token_file,
+        )
+        return lark_task.collect(
+            since, until, config=config.lark, client=client, token_manager=manager
+        )
+
+
 def load_tasks_file(path: str, day: date) -> CollectResult[TaskRecord]:
     """从 JSON 文件读取任务数据，转成与飞书采集器相同的 CollectResult[TaskRecord]。
 
@@ -334,17 +364,20 @@ def load_tasks_file(path: str, day: date) -> CollectResult[TaskRecord]:
     **数据进入的路径与真实采集完全一致**：同样是 CollectResult[TaskRecord]，
     同样要过成员身份映射表，同样进聚合与日报生成。因此不存在"另一套逻辑"。
 
-    文件格式（数组）：
+    文件格式（数组，v1.16 起与飞书真实字段对齐）：
         [
           {"assignee": "alice@example.com", "title": "写周报",
-           "status_from": "进行中", "status_to": "已完成",
+           "status": "done", "created_at": "2026-04-24T09:00:00+08:00",
+           "completed_at": "2026-04-24T16:30:00+08:00",
            "updated_at": "2026-04-24T16:30:00+08:00"}
         ]
 
     说明：
       - `assignee` 必须能通过 config.yaml 的成员映射表匹配到人，否则该条会被
         聚合层丢弃（与真实采集行为一致，不凭空造成员）
-      - `updated_at` 可省略，默认取目标日期当天 12:00
+      - `status` 只认飞书的 "todo" / "done"（默认 "todo"）
+      - `created_at` / `due_at` / `completed_at` 都可省略；`updated_at` 省略时
+        默认取目标日期当天 12:00
     """
     file_path = Path(path)
     if not file_path.exists():
@@ -359,6 +392,25 @@ def load_tasks_file(path: str, day: date) -> CollectResult[TaskRecord]:
         raise DailyReportError("任务数据顶层必须是数组")
 
     records: list[TaskRecord] = []
+
+    def _optional_time(value: object, *, index: int, key: str) -> datetime | None:
+        """解析可选时间字段。
+
+        统一**去掉时区**（naive）：`main.run()` 里 since/until 是 naive 本地时间，
+        aware 与 naive 混在一起比较会直接抛 TypeError。带 `+08:00` 的值去掉时区后
+        仍是同一个墙上时间，因此语义不变。
+        """
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(
+                tzinfo=None
+            )
+        except ValueError as exc:
+            raise DailyReportError(
+                f"第 {index} 条任务的 {key} 不是合法时间：{value}"
+            ) from exc
+
     for index, item in enumerate(raw):
         if not isinstance(item, dict):
             raise DailyReportError(f"第 {index} 条任务必须是对象")
@@ -368,24 +420,20 @@ def load_tasks_file(path: str, day: date) -> CollectResult[TaskRecord]:
                 f"第 {index} 条任务缺少必填字段：{', '.join(missing)}"
             )
 
-        raw_time = item.get("updated_at")
-        if raw_time:
-            try:
-                updated = datetime.fromisoformat(str(raw_time).replace("Z", "+00:00"))
-            except ValueError as exc:
-                raise DailyReportError(
-                    f"第 {index} 条任务的 updated_at 不是合法时间：{raw_time}"
-                ) from exc
-        else:
-            updated = datetime.combine(day, time(12, 0))
-
         records.append(
             TaskRecord(
                 assignee=str(item["assignee"]),
                 title=str(item["title"]),
-                status_from=str(item.get("status_from", "")),
-                status_to=str(item.get("status_to", "")),
-                updated_at=updated,
+                status=str(item.get("status") or "todo"),
+                created_at=_optional_time(item.get("created_at"), index=index, key="created_at"),
+                due_at=_optional_time(item.get("due_at"), index=index, key="due_at"),
+                completed_at=_optional_time(
+                    item.get("completed_at"), index=index, key="completed_at"
+                ),
+                updated_at=(
+                    _optional_time(item.get("updated_at"), index=index, key="updated_at")
+                    or datetime.combine(day, time(12, 0))
+                ),
             )
         )
 
@@ -431,15 +479,19 @@ def _mock_results(config: AppConfig, day: date) -> dict:
         TaskRecord(
             assignee=names_lark[0],
             title="日报模板评审",
-            status_from="进行中",
-            status_to="已完成",
+            status="done",
+            created_at=stamp(9, 40),
+            due_at=None,
+            completed_at=stamp(16, 30),
             updated_at=stamp(16, 30),
         ),
         TaskRecord(
             assignee=names_lark[1],
             title="GitHub 采集模块联调",
-            status_from="待开始",
-            status_to="进行中",
+            status="todo",
+            created_at=stamp(10, 15),
+            due_at=stamp(18, 0),
+            completed_at=None,
             updated_at=stamp(11, 0),
         ),
     ]
@@ -545,6 +597,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.set_defaults(push=None)
     parser.add_argument(
+        "--lark-auth",
+        action="store_true",
+        help="打印飞书用户身份授权链接（v1.16）：读「我负责的」任务只认 user_access_token",
+    )
+    parser.add_argument(
+        "--lark-auth-code",
+        default=None,
+        metavar="CODE",
+        help="用授权回调里的 code 换取并落盘 user_access_token（v1.16，配合 --lark-auth）",
+    )
+    parser.add_argument(
         "--working-days-only",
         action="store_true",
         help="仅工作日运行（v1.4）：周末或 config.yaml 中 holidays 命中的日期跳过。"
@@ -586,6 +649,35 @@ def load_dotenv(path: str | Path | None = None) -> int:
     return loaded
 
 
+def _lark_auth(config: AppConfig, *, url_only: bool, code: str | None) -> int:
+    """飞书用户身份一次性授权（v1.16，tasks.md Task 4 v1.16 验收标准）。
+
+    为什么非做不可：`GET /task/v2/tasks`（「我负责的」任务）官方文档只接受
+    `user_access_token`；应用身份调它**不报错**，而是恒返回 `code=0` + 0 条。
+    实测已经把这条口径钉死（见 design.md §3.6），所以"没授权"必须报错，
+    不能继续伪装成"今天没有任务"。
+    """
+    with httpx.Client(base_url=config.lark.api_base, timeout=config.lark.timeout) as client:
+        manager = UserTokenManager(client, config.lark.app_id, config.lark.app_secret)
+        if url_only:
+            print("在浏览器打开下面的链接，用**你自己的飞书账号**同意授权：")
+            print()
+            print(manager.authorization_url())
+            print()
+            print("同意后浏览器会跳到 redirect_uri（页面 404 是正常的），")
+            print("把地址栏里 `code=` 后面那一串复制回来执行：")
+            print(f"  python main.py --lark-auth-code <CODE>")
+            return 0
+        try:
+            manager.exchange_code(code or "")
+        except DailyReportError as exc:
+            print(f"换取用户 Token 失败：{exc}")
+            return 1
+        print(f"用户 Token 已落盘：{DEFAULT_TOKEN_FILE}")
+        print("之后 30 天内作业会自动用 refresh_token 续期，不需要再授权。")
+        return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     _force_utf8_console()
     load_dotenv()
@@ -603,6 +695,9 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("加载配置失败", extra={"source": "main", "error": str(exc)})
         print(f"加载配置失败：{exc}")
         return 2
+
+    if args.lark_auth or args.lark_auth_code:
+        return _lark_auth(config, url_only=args.lark_auth, code=args.lark_auth_code)
 
     if args.check:
         checks = health_check(config)

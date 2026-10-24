@@ -62,7 +62,7 @@
    | ② 真实 GitHub 仓库（2026-04-24，不推送） | 拉真实提交 |
    | ③ 健康检查（--check） | 逐项检查配置 |
    | ④ 今天（真实推送，慎用） | 会真的发邮件/推飞书 |
-   | ⑤ 跑全部测试（pytest） | 481 个用例 |
+   | ⑤ 跑全部测试（pytest） | 492 个用例 |
    | ⑥ 只跑当前打开的测试文件 | 调试单个用例 |
    | ⑦ 展示页：本地只读查看已生成的日报 | 起本地网页看日报（v1.2 新增） |
 
@@ -332,15 +332,15 @@ v1.2 的前端是用 **OpenDesign** 迭代出来的，过程留了档：
 | 书中列出的文件 | 用例数 | 覆盖内容 |
 |---|---|---|
 | `tests/test_github.py` | 12 | GitHub 采集层 |
-| `tests/test_lark_task.py` | 7 | 飞书任务采集 |
+| `tests/test_lark_task.py` | 9 | 飞书任务采集（v1.16 按真实接口重写：用户身份、`type=my_tasks`、本地窗口过滤、毫秒时间戳、未授权即失败、分页） |
 | `tests/test_lark_msg.py` | 23 | 飞书群消息采集（关键词过滤 + 敏感词剔除 + v1.8.2 五种时间戳形态 + v1.8.3 排除应用自身消息） |
 | `tests/test_attendance.py` | 20 | 飞书考勤采集（v1.1 新增） |
-| `tests/test_generator.py` | 52 | 日报生成（含 v1.1 考勤逻辑、v1.3 双 ID 身份映射与「今日无记录」渲染、v1.5 提交摘要截断与条目分组、v1.6 邮件卡片版式与计数/总结句、v1.7 配色白名单与成员名条、v1.8 工程进展段与可配主题、v1.8.4 考勤行缺失侧呈现、v1.9 概览下的代码变更行数、v1.10 分板块空态与最近一次提交、v1.11 正文标题与主题同源、v1.15 邮件撤掉提交明细与协作沟通板块） |
+| `tests/test_generator.py` | 55 | 日报生成（含 v1.1 考勤逻辑、v1.3 双 ID 身份映射与「今日无记录」渲染、v1.5 提交摘要截断与条目分组、v1.6 邮件卡片版式与计数/总结句、v1.7 配色白名单与成员名条、v1.8 工程进展段与可配主题、v1.8.4 考勤行缺失侧呈现、v1.9 概览下的代码变更行数、v1.10 分板块空态与最近一次提交、v1.11 正文标题与主题同源、v1.15 邮件撤掉提交明细与协作沟通板块、v1.16 任务行改真实字段） |
 | `tests/test_repo_progress.py` | 32 | 工程进展采集（v1.8 新增，自造临时 Git 仓库）：仓库定位、当日计数、版本号取最高、变更起点判定、闭环判定、规范覆盖率注入与降级、v1.10 最近一次提交日期 |
 | `tests/test_email.py` | 7 | SMTP 推送 |
 | `tests/test_lark_bot.py` | 8 | 飞书机器人推送 |
-| `tests/test_main.py` | 22 | `main.py` 入口：编排、`load_dotenv`、`load_tasks_file`、CLI 退出码、路径锚定、v1.3 考勤名单接线、v1.4 仅工作日开关默认关闭、v1.11 正文标题与邮件主题同源 |
-| `tests/test_pipeline.py` | 25 | 交付流水线采集（v1.13 新增：只读工作流/Dockerfile/tag；v1.14 增公开 Check Runs 的结论聚合、远端标签与注入取数） |
+| `tests/test_main.py` | 25 | `main.py` 入口：编排、`load_dotenv`、`load_tasks_file`、CLI 退出码、路径锚定、v1.3 考勤名单接线、v1.4 仅工作日开关默认关闭、v1.11 正文标题与邮件主题同源、v1.16 任务行与流水线开关 |
+| `tests/test_pipeline.py` | 26 | 交付流水线采集（v1.13 新增：只读工作流/Dockerfile/tag；v1.14 增公开 Check Runs 的结论聚合、远端标签与注入取数） |
 | `tests/test_integration.py` | 12 | 端到端集成：全链路、单源失败不阻塞、v1.4 周末/节假日默认照常生成 |
 
 另有 11 个测试文件覆盖第 8~10 章的 Agent 设计模式与治理层（书里未规定文件清单）：
@@ -378,7 +378,7 @@ python -m pytest tests/ -v
    `_attendance_user_ids()`（从 `members[].lark_employee_id` 去重取名单）；
    `formatter.aggregate()` 增加 `by_lark_employee` 映射（空 ID 不入表）；
    `template.render_markdown()` 的考勤分支由两段变三段。
-6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.15 后为 481），规范与代码一起提交（书图 7-8 的闭环要求）。
+6. **全量回归 + 同一 commit**：`347 passed`（v1.3 当时的数字；v1.16 后为 492），规范与代码一起提交（书图 7-8 的闭环要求）。
 
 真实跑通的证据（2026-10-09 那次）：日志从
 `飞书考勤采集失败 error: ... employeeNos is empty` 变成
@@ -783,6 +783,44 @@ v1.6 的邮件版式是照需求参考稿（一张手机邮件截图）做出来
 
 **一键复现**：`python -m pytest tests/test_generator.py -q`（52 passed）；
 真跑 `python main.py --no-push` 后打开邮件 HTML 就只剩三段。
+
+### v1.16：任务进展改呈真实任务 + 交付流水线改开关（起点在 proposal.md）
+
+| 层级 | 改了什么 |
+|---|---|
+| `proposal.md` §3.1/§3.3 | 新增 7 条：任务必须呈现真实任务（标题 + 日期 + 完成情况）；只采「我负责的」且必须用户身份；未授权要明确失败并给出授权命令；窗口口径（created/completed/updated 任一命中）；`email.show_pipeline` 默认关、关时不采集不渲染；开时行为不退化；任务 Token 缺失要进顶部来源告警 |
+| `design.md` §3 / §3.5 / §3.6 / §4.1 / §6.7 | 新增 §3.6「飞书任务的真实口径」：把三处臆造（不存在的 `updated_since/updated_until`、不存在的 `status_from/status_to`、只认用户身份的接口用应用身份去调）连同后果列成表；§3.5 补开关语义；§6.7(5) 补 `task_line()` 的显示格式；§4.1 的 `lark_task.collect()` 去掉 `project_id`、加 `token_manager` |
+| `tasks.md` | 重写 Task 4 的验收标准（8 条）；Task 7 加 5 条 v1.16 验收标准；Task 1/6 的空态文案随之更新；迭代记录补 v1.16 |
+| `contracts/` | `data-models.md` 的 TaskRecord 换成 7 个真实字段并写明为什么改；`api-spec.yaml` 的 TaskRecord/TaskView 同步，`collector.lark_task` 的接口段去掉 `project_id`、补身份与窗口口径 |
+| `shared/models.py`、`collector/lark_task.py` | `TaskRecord` 改成 `status/created_at/due_at/completed_at/updated_at`（+ `done` 属性）；采集器全文重写：`GET /task/v2/tasks?type=my_tasks`、每页 50 条翻页、本地窗口过滤、毫秒时间戳还原、Token 失效重试 1 次、未授权直接失败且不发请求 |
+| `collector/lark_auth.py`、`main.py` | 用户授权链路：`--lark-auth` 打印授权链接（scope 含 `task:task:read`），`--lark-auth-code` 换 token 落盘；`_collect_tasks()` 用 `UserTokenManager` 调采集器；`pipeline=` 改为 `config.email.show_pipeline` 为真才采集 |
+| `generator/template.py`、`shared/config.py` | 新增 `task_line()`（Markdown 与邮件共用）与 `NO_TASKS` 新文案；邮件流水线块改为 `pipeline is not None` 才渲染（默认关时连板块标题都没有，`PIPELINE_EMPTY` 删除）；`EmailConfig.show_pipeline` 默认 `False` |
+| `webview/` | `TaskView` 与 `index.html` 的 `fillTasks()` 改成「已完成 / 未完成 + 对应时间」，删掉「A → B」的状态流转画法 |
+| 测试 | `test_lark_task.py` 重写为 9 条（真实响应结构、毫秒时间戳、窗口过滤、未授权失败、Token 失效重试、分页）；`test_main.py` 加 3 条（未授权文案、用户 Token 管理器接线、开关关闭不采集）；`test_shared.py` 加 2 条（默认关、可打开）；`test_generator.py` 加 3 条（`task_line` 两态、两种路径同源、旧"→"写法消失）；`test_pipeline.py` 的旧空态用例改成"关闭即不出现 + 打开时中性说明"两条 |
+
+**触发**：日报的「任务进展」在真实租户里**长期为空且不报错** —— 用户在飞书里新建完成的任务从来没进过日报。
+照官方文档核对后确认是三处臆造：① 接口没有 `updated_since/updated_until`；② 接口只返回任务当前状态，
+没有 `status_from/status_to` 流转历史；③ 该接口**只接受** `user_access_token`，应用身份调用返回
+`code=0` + 0 条 —— 于是"没授权"被渲染成"今日无任务"，这是最坏的一种错法（假话比报错更难发现）。
+
+**为什么把流水线板块改成默认关**：它是"课程作业交到哪一步"的证据，不是每天变的日报事实；
+每天把同一张卡片塞进收件箱是噪音。开关留在 `config.yaml`（`email.show_pipeline`），打开即恢复
+v1.13/v1.14 的全部行为，代码没删。
+
+**一次性授权（读个人任务必须做，30 天内免维护）**：
+
+```bash
+cd sdd-daily-report
+python main.py --lark-auth            # 打印授权链接，浏览器里点"同意"
+python main.py --lark-auth-code XXX   # 把跳转地址里的 code= 后面那串填进来
+```
+
+token 落在 `data/lark_user_token.json`（gitignore），2 小时有效、30 天内自动续期。
+不授权也能跑：日报照常生成，只是「飞书任务」会在顶部来源告警里明确写"未授权"，
+而不是假装今天没任务。
+
+**一键复现**：`python main.py --no-push`（日志里 `飞书任务 success=true`，或未授权时给出授权提示）；
+或 `python -m pytest tests/test_lark_task.py tests/test_main.py tests/test_generator.py -q`。
 
 ## 工程化配套（第 3、8、9 章）
 

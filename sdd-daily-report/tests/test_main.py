@@ -14,8 +14,9 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -189,8 +190,9 @@ def test_load_tasks_file_parses_records(tmp_dir):
                 {
                     "assignee": "lisi@company.com",
                     "title": "写周报",
-                    "status_from": "进行中",
-                    "status_to": "已完成",
+                    "status": "done",
+                    "created_at": "2026-04-24T09:00:00+08:00",
+                    "completed_at": "2026-04-24T16:30:00+08:00",
                     "updated_at": "2026-04-24T16:30:00+08:00",
                 }
             ],
@@ -206,8 +208,9 @@ def test_load_tasks_file_parses_records(tmp_dir):
     record = result.records[0]
     assert record.assignee == "lisi@company.com"
     assert record.title == "写周报"
-    assert record.status_from == "进行中"
-    assert record.status_to == "已完成"
+    assert record.status == "done"
+    assert record.done is True
+    assert record.completed_at is not None and record.completed_at.hour == 16
     assert record.updated_at.year == 2026
 
 
@@ -457,4 +460,87 @@ def test_non_working_day_prints_the_reason_when_skipped(tmp_dir, config, monkeyp
     out = capsys.readouterr().out
     assert "2026-08-22" in out
     assert "--working-days-only" in out
+
+
+# ---------------- v1.16：任务用用户身份、流水线板块可关（design.md §3.6、§6.7(6)）----------------
+
+
+def test_collect_tasks_without_authorization_fails_with_the_auth_command(tmp_dir, config):
+    """没授权时**不发请求**、直接失败，且错误里给出授权命令。
+
+    这是本项目最贵的教训（v1.16）：应用身份调任务接口不报错、只返回 0 条，
+    于是"没授权"被写成"今日无任务"。宁可报失败，也不能说假话。
+    """
+    config = dataclasses.replace(
+        config, lark=dataclasses.replace(config.lark, user_token_file=str(tmp_dir / "not_authorized.json"))
+    )
+
+    result = app._collect_tasks(config, datetime(2026, 8, 20, 0, 0), datetime(2026, 8, 20, 23, 59))
+
+    assert result.success is False
+    assert "--lark-auth" in result.error_message
+    assert "user_access_token" in result.error_message
+
+
+def test_collect_tasks_uses_the_user_token_file_when_it_exists(tmp_dir, config, monkeypatch):
+    """授权文件在时，必须把基于它的 token 管理器交给采集器（用户身份）。"""
+    token_file = tmp_dir / "lark_user_token.json"
+    token_file.write_text(
+        json.dumps(
+            {
+                "access_token": "u-access",
+                "refresh_token": "u-refresh",
+                # 落盘格式是 float 时间戳（不是 ISO 串），见 collector/lark_auth.py 的 _save()
+                "expires_at": 4102444800.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = dataclasses.replace(
+        config, lark=dataclasses.replace(config.lark, user_token_file=str(token_file))
+    )
+    seen: dict = {}
+
+    def fake_collect(since, until, *, config, client=None, token_manager=None, **kwargs):  # noqa: ANN001
+        from shared.models import CollectResult
+
+        seen["manager"] = token_manager
+        seen["client"] = client
+        return CollectResult.ok([])
+
+    monkeypatch.setattr(app.lark_task, "collect", fake_collect)
+
+    result = app._collect_tasks(config, datetime(2026, 8, 20, 0, 0), datetime(2026, 8, 20, 23, 59))
+
+    assert result.success is True
+    assert seen["manager"] is not None, "有授权文件时必须传用户身份 Token 管理器"
+    assert seen["manager"].get_token() == "u-access"
+
+
+def test_pipeline_is_not_collected_when_the_switch_is_off(tmp_dir, config, monkeypatch):
+    """开关关闭时连采集都不做：既不渲染板块，也不产生那两次 HTTP。"""
+    project = tmp_dir / "proj"
+    project.mkdir()
+    config_path = project / "config.yaml"
+    config_path.write_text(_minimal_yaml(config), encoding="utf-8")
+    calls = {"n": 0}
+
+    def fake_collect(*args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        calls["n"] += 1
+        return None
+
+    monkeypatch.setattr(app.pipeline_collector, "collect", fake_collect)
+    loaded = app.load_config(config_path)
+
+    from shared.storage import ReportStorage
+
+    assert loaded.email.show_pipeline is False
+    with ReportStorage(loaded.storage_path) as storage:
+        summary = app.run(loaded, day=DAY, mock=True, push=False, storage=storage)
+        row = storage.get(DAY)
+
+    assert summary["status"] == "ok"
+    assert calls["n"] == 0, "板块关闭时不应调用采集器"
+    assert "交付流水线" not in row["markdown"]
+    assert "交付流水线" not in row["html"]
 

@@ -34,6 +34,14 @@ logger = get_logger("collector.lark_auth")
 # 用户身份读取群聊消息所需的 scope
 GROUP_MSG_SCOPE = "im:message.group_msg"
 
+# 用户身份读取「我负责的」任务所需的 scope（v1.16）。
+# 必须写清楚：`GET /task/v2/tasks` 官方文档只接受 user_access_token —— 应用身份调它
+# 不会报错，而是**恒返回 code=0 + 0 条**（本项目实测），于是"读不到"会被误当成"没有任务"。
+TASK_READ_SCOPE = "task:task:read"
+
+# 一次性授权时申请的全部 scope（空格分隔，飞书 OAuth 的规定写法）
+DEFAULT_USER_SCOPES = f"{GROUP_MSG_SCOPE} {TASK_READ_SCOPE}"
+
 # 项目根目录（本文件在 collector/ 下）。默认路径锚在项目根而不是 cwd ——
 # 合并成单仓库后项目嵌在子目录里，从仓库根调用是很自然的动作。
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -147,8 +155,13 @@ class UserTokenManager:
         self.refresh_count = 0
 
     # ---------------------------------------------------------- 授权
-    def authorization_url(self, *, state: str = "sdd") -> str:
-        """生成用户授权链接（用户在浏览器打开并同意授权）。"""
+    def authorization_url(self, *, state: str = "sdd", scopes: str | None = None) -> str:
+        """生成用户授权链接（用户在浏览器打开并同意授权）。
+
+        ``scopes`` 默认是 `DEFAULT_USER_SCOPES`（群消息历史 + 读我负责的任务，v1.16）。
+        飞书的 scope 用**空格**分隔；申请到的 scope 是"一次性授权时勾过的全部"，
+        之后不能只靠改代码扩大 —— 想加新权限必须重新走一次授权。
+        """
         if not self._app_id:
             raise CollectorError("缺少 app_id，无法生成授权链接", source="lark:auth")
         from urllib.parse import urlencode
@@ -157,7 +170,7 @@ class UserTokenManager:
             {
                 "app_id": self._app_id,
                 "redirect_uri": self._redirect_uri,
-                "scope": GROUP_MSG_SCOPE,
+                "scope": scopes or DEFAULT_USER_SCOPES,
                 "state": state,
             }
         )

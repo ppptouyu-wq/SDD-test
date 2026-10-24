@@ -184,12 +184,28 @@ def test_email_shows_the_pipeline_block():
     assert html.index(template.SECTION_PROGRESS) < html.index(template.SECTION_PIPELINE)
 
 
-def test_email_shows_neutral_state_without_pipeline():
-    """仓库里没有流水线时是中性空态，不写成采集失败。"""
+def test_email_omits_pipeline_block_when_disabled():
+    """v1.16：pipeline=None 表示「本期不展示这个板块」，整块不出现。
+
+    旧版会补一句「未记录交付流水线」，但读者分不清那是"没做"还是"没读到"，
+    反而更像一条失败告警 —— 关掉开关时连痕迹都不该留。
+    """
     members = formatter.aggregate([Member(name="张三", github="zhangsan", lark="zhangsan@company.com")])
     report = formatter.generate(members, DAY, "平台研发组")
 
-    assert template.PIPELINE_EMPTY in report.html
+    assert template.SECTION_PIPELINE not in report.html
+    assert "交付流水线" not in report.html
+
+
+def test_email_shows_neutral_state_when_repo_has_no_workflows():
+    """开关打开、仓库确实没有工作流时给中性说明，不写成采集失败。"""
+    members = formatter.aggregate([Member(name="张三", github="zhangsan", lark="zhangsan@company.com")])
+    report = formatter.generate(
+        members, DAY, "平台研发组", pipeline=PipelineStatus()
+    )
+
+    assert template.SECTION_PIPELINE in report.html
+    assert "CI 工作流：未配置" in report.html
     assert "采集失败" not in report.html.split(template.SECTION_PIPELINE)[1][:400]
 
 

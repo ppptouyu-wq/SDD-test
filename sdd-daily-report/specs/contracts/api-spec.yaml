@@ -136,25 +136,38 @@ components:
 
     TaskRecord:
       type: object
-      description: 任务变更记录（书图 5-6）
-      required: [assignee, title, status_from, status_to, updated_at]
+      description: 任务记录（书图 5-6；v1.16 按飞书 `GET /task/v2/tasks` 真实字段重写）
+      required: [assignee, title, status, updated_at]
       properties:
         assignee:
           type: string
-          description: 负责人（飞书用户名 / 邮箱）
+          description: 负责人（飞书 open_id；取不到时为 "unassigned"）
         title:
           type: string
-          description: 任务标题
-        status_from:
+          description: 任务标题（飞书 summary）
+        status:
           type: string
-          description: 原状态
-        status_to:
+          enum: [todo, done]
+          description: 任务当前状态（飞书原始值，不翻译）。旧版的 status_from/status_to 是臆造字段，接口无此数据
+        created_at:
           type: string
-          description: 新状态
+          format: date-time
+          nullable: true
+          description: 任务创建时间
+        due_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 截止时间/日期；未设置时 null
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 完成时间；未完成时 null（飞书返回字符串 "0"）
         updated_at:
           type: string
           format: date-time
-          description: 变更时间
+          description: 最后一次更新时间
 
     MessageRecord:
       type: object
@@ -407,18 +420,31 @@ components:
 
     TaskView:
       type: object
-      description: 任务进展视图
-      required: [title, status_from, status_to]
+      description: 任务进展视图（v1.16 与 TaskRecord 对齐：状态 + 三个时间戳）
+      required: [title]
       properties:
         title:
           type: string
-        status_from:
+        status:
           type: string
-        status_to:
+          enum: [todo, done]
+          description: 任务当前状态；展示层据此画「已完成 / 未完成」
+        created_at:
           type: string
+          format: date-time
+          nullable: true
+        due_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
         updated_at:
           type: string
           format: date-time
+          nullable: true
 
     MessageView:
       type: object
@@ -610,16 +636,18 @@ x-module-contracts:
       - stats/files 需回查单条 commit 详情（列表接口不返回）
 
   collector.lark_task:
-    summary: 采集飞书项目中发生状态变更的任务
+    summary: 采集「我负责的」飞书任务中当日有动静的那些（v1.16 按真实接口重写）
     function: collect
     parameters:
-      - { name: project_id, type: string, required: true }
-      - { name: since, type: string, format: date-time, required: true }
-      - { name: until, type: string, format: date-time, required: true }
+      - { name: since, type: string, format: date-time, required: true, description: 窗口起点（本机时区 naive） }
+      - { name: until, type: string, format: date-time, required: true, description: 窗口终点 }
     returns:
       $ref: "#/components/schemas/CollectResult"
       items: { $ref: "#/components/schemas/TaskRecord" }
     behaviors:
+      - 身份：只接受 user_access_token（`GET /task/v2/tasks?type=my_tasks`）；应用身份调用不报错但恒返回 0 条，故未授权时直接失败并提示 --lark-auth
+      - 分页：每页 50 条，按 has_more / page_token 翻页
+      - 过滤：created_at / completed_at / updated_at 任一落在 [since, until] 内的任务才保留
       - 飞书 Token 过期（错误码 99991663）时自动刷新后重试 1 次
       - 超时重试 3 次，仍失败则读 error_message 标注"数据获取失败"
 

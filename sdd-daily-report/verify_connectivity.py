@@ -183,7 +183,8 @@ def _probe_collector(token: str, cfg: AppConfig, label: str, kind: str) -> None:
     """
     from datetime import date, datetime, time, timezone
 
-    from collector import lark_attendance, lark_msg, lark_task
+    from collector import lark_attendance, lark_msg
+    import main as app
 
     print(f"\n  ── {label} ──")
     day = date(2026, 4, 24)
@@ -192,9 +193,9 @@ def _probe_collector(token: str, cfg: AppConfig, label: str, kind: str) -> None:
 
     try:
         if kind == "task":
-            result = lark_task.collect(
-                cfg.lark.project_id, since, until, config=cfg.lark
-            )
+            # v1.16：任务接口只接受 user_access_token，探测也必须用用户身份，
+            # 否则探测结论会是"接口正常、0 条"，把"没授权"伪装成"没问题"。
+            result = app._collect_tasks(cfg, since, until)
         elif kind == "msg":
             result = lark_msg.collect(
                 cfg.lark.chat_id, cfg.lark.keywords, since, until,

@@ -16,14 +16,20 @@
 | deletions | int | 是 | 删除行数 |
 | files_changed | int | 是 | 变更文件数 |
 
-### TaskRecord（任务变更记录）
+### TaskRecord（任务记录）— v1.16 按飞书真实字段重写
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| assignee | str | 是 | 负责人（飞书用户名） |
-| title | str | 是 | 任务标题 |
-| status_from | str | 是 | 原状态 |
-| status_to | str | 是 | 新状态 |
-| updated_at | datetime | 是 | 变更时间 |
+| assignee | str | 是 | 负责人（飞书 open_id；取不到时为 `unassigned`） |
+| title | str | 是 | 任务标题（飞书 `summary`） |
+| status | str | 是 | 任务当前状态，只取 `todo` / `done`（飞书原始值，不翻译） |
+| created_at | datetime \| None | 否 | 任务创建时间 |
+| due_at | datetime \| None | 否 | 截止时间/日期；未设置为 None |
+| completed_at | datetime \| None | 否 | 完成时间；未完成时 None（飞书返回字符串 `"0"`） |
+| updated_at | datetime | 是 | 最后一次更新时间 |
+
+> **为什么改**（v1.16，design.md §3.6）：旧契约里的 `status_from` / `status_to` 是**臆造字段** —— 飞书任务接口只返回任务**当前**状态，没有状态流转历史；写的 `updated_since` / `updated_until` 参数也不存在。按臆造契约实现的结果是"恒返回 0 条且不报错"，与"今天真的没任务"完全无法区分。
+>
+> 时间字段一律是**本机时区的 naive datetime**（由毫秒时间戳 `datetime.fromtimestamp` 还原），与 `main.run()` 里 `since` / `until` 的构造方式保持一致。
 
 ### MessageRecord（消息记录）
 | 字段 | 类型 | 必填 | 说明 |

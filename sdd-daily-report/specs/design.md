@@ -77,12 +77,14 @@ CommitRecord（代码提交记录）
   deletions: int         # 删除行数
   files_changed: int     # 变更文件数
 
-TaskRecord（任务变更记录）
-  assignee: str          # 负责人（飞书用户名）
-  title: str             # 任务标题
-  status_from: str       # 原状态
-  status_to: str         # 新状态
-  updated_at: datetime   # 变更时间
+TaskRecord（任务记录；v1.16 按飞书真实响应重写，见 §3.6）
+  assignee: str              # 负责人（飞书 open_id；取不到时为 "unassigned"）
+  title: str                 # 任务标题（飞书 summary）
+  status: str                # "todo" / "done"（飞书原始值，不翻译）
+  created_at: datetime|None  # 任务创建时间
+  due_at: datetime|None      # 截止时间/日期
+  completed_at: datetime|None  # 完成时间（未完成时 None；飞书返回字符串 "0"）
+  updated_at: datetime       # 最后一次更新时间
 
 MessageRecord（消息记录）
   sender: str            # 发送者（飞书用户名）
@@ -405,9 +407,16 @@ v1.14 实测 `GET .../commits/{sha}/check-runs` **匿名返回 200** —— 结�
 `sha` 取任一 check run 的 `head_sha` 前 7 位（同一次提交的检查项 `head_sha` 相同）。
 
 **降级**：本机不是 Git 仓库、或仓库里没有任何流水线文件、也没有任何可读的运行结论时
-`pipeline = None`，邮件渲染中性空态「未记录交付流水线」，不报错、不影响其他板块
-（`proposal.md` §3.3 v1.13）。有仓库标识但接口读不到时**不是** `None`：文件类事实照常呈现，
-只有「最近一次运行」那一行写"未采集"（`proposal.md` §3.3 v1.14）。
+`pipeline = None`（`proposal.md` §3.3 v1.13）。有仓库标识但接口读不到时**不是** `None`：
+文件类事实照常呈现，只有「最近一次运行」那一行写"未采集"（`proposal.md` §3.3 v1.14）。
+
+**v1.16：板块改为开关控制（`email.show_pipeline`，默认关闭）**。
+- 开关关闭时不调 `pipeline.collect()`（连那两次 HTTP 都不发），`pipeline` 传 `None`，
+  邮件渲染时**整块不出现**（连板块标题「🚚 交付流水线」都没有）。
+- 为什么"关闭时不留空态"：旧版在 `None` 时补一句「未记录交付流水线」，读者分不清那是
+  "没做"还是"没读到"，那行字本身更像一条失败告警 —— 一个默认关闭的板块不该留痕迹。
+- 开关打开时行为与 v1.14 **完全一致**：`None` 仍走上面那条"最近一次运行写未采集"的降级，
+  仓库没有任何流水线文件时由 `_pipeline_callout` 内部说明「CI 工作流：未配置」。
 
 **可测试性**：`collect()` 接受注入的 `http_get(url) -> dict | None`（与 §3.4 的
 `coverage` 注入同一手法），默认实现用 `httpx` 带超时；测试用假取数函数，永不打真网络。
@@ -415,6 +424,42 @@ v1.14 实测 `GET .../commits/{sha}/check-runs` **匿名返回 200** —— 结�
 **它不是数据源**：与 `RepoProgress` 同理，不进 `DailyReport.sources`（§3.4 末段）。
 
 > 对应验收标准：`proposal.md` §3.1 的 v1.13 三条与 v1.14 六条、§3.3 的 v1.13 一条与 v1.14 一条；`tasks.md` Task 15。
+
+### 3.6 飞书任务的真实口径（v1.16 缺陷修复 + 需求变更）
+
+**问题**：v1.0 起「任务进展」板块在真实租户里**永远是空的**，而且不报错。
+根因是三处照想象写的接口假设（`proposal.md` §3.1 v1.16 三条）：
+
+| 假设（旧实现） | 官方接口事实（`GET /task/v2/tasks`） | 后果 |
+|---|---|---|
+| 请求带 `updated_since` / `updated_until` 做时间过滤 | 该接口**没有**这两个参数（只有 `page_size`/`page_token`/`completed`/`type`/`user_id_type`） | 参数被忽略，窗口过滤根本没发生 |
+| 从 `status_from` / `status_to` 读"状态流转" | 只返回任务**当前** `status`（`todo`/`done`），没有流转历史 | 两个字段恒为空串 |
+| 用 `tenant_access_token`（应用身份）调用 | 只接受 **`user_access_token`**；应用身份调用返回 `code=0` + **0 条** | "没授权"被渲染成"今日无任务" —— 最坏的错法 |
+
+**修正后的采集规则（四件必须同时成立的事）**：
+
+1. **身份**：`user_access_token`，来自一次性授权（`python main.py --lark-auth` → 浏览器点同意 →
+   `python main.py --lark-auth-code <code>`），token 落盘 `data/lark_user_token.json`，
+   2 小时有效、30 天 refresh 窗口内自动续期。scope 至少 `task:task:read`。
+2. **范围**：只采「我负责的」（`type=my_tasks`），每页 50 条，按 `has_more`/`page_token` 翻页。
+3. **窗口**：接口不按日期过滤，过滤在采集层做 —— `created_at` / `completed_at` / `updated_at`
+   任一落在 `[since, until]` 内才保留。三者都看，才能同时覆盖"今天新建"、"今天完成"、"今天改过"。
+4. **失败语义**：没有授权文件时**直接失败**（`CollectResult.fail`），错误文案必须含
+   `user_access_token` 与 `--lark-auth`，且**不发出任何请求**。宁可显示"任务数据获取失败"，
+   也不能显示"今日无任务" —— 后者是假话，前者至少是实话。
+
+**时间戳口径**：飞书返回毫秒**字符串**（未完成的任务 `completed_at` 是 `"0"`），采集层用
+`datetime.fromtimestamp(ms/1000)` 还原成**本机时区 naive datetime**，与 `main.run()` 里
+`since`/`until` 的构造方式一致。混用 aware/naive 会在比较时直接 `TypeError`。
+
+**展示口径**：每条任务渲染成 `task_line(task)`＝「任务标题｜创建 10-24｜已完成 10-25」
+或「任务标题｜创建 10-24｜未完成｜截止 10-26」。Markdown 与邮件共用这一个函数；
+展示页用 `TaskView`（`status` + 三个时间戳）自行画「已完成 / 未完成」。
+
+**它不是数据源**：与前两个板块同理，任务采集失败会进 `DailyReport.sources`（`飞书任务`），
+因为它确实是外部 API，读者必须知道"这块没采到"（`proposal.md` §3.3 v1.16 末条）。
+
+> 对应验收标准：`proposal.md` §3.1 的 v1.16 五条与 §3.3 的 v1.16 一条；`tasks.md` Task 4（v1.16 重写）。
 
 ## 4. 接口契约
 
@@ -428,11 +473,15 @@ github.collect(
     until: datetime            # 结束时间
 ) -> list[CommitRecord]        # 返回提交记录列表
 
+# 采集层接口（v1.16 重写：去掉不存在的 project_id 参数，改为用户身份 + 本地窗口过滤）
 lark_task.collect(
-    project_id: str,           # 飞书项目ID
-    since: datetime,           # 起始时间
-    until: datetime            # 结束时间
-) -> list[TaskRecord]          # 返回任务变更列表
+    since: datetime,           # 窗口起点（本机时区 naive）
+    until: datetime,           # 窗口终点
+    *,
+    config,                    # LarkConfig
+    client=None,               # httpx.Client（注入用）
+    token_manager=None,        # 提供 user_access_token 的对象；None 表示未授权 → 直接失败
+) -> CollectResult[TaskRecord] # 失败时 error_message 含 user_access_token 与 --lark-auth
 
 lark_msg.collect(
     chat_id: str,              # 群ID
@@ -695,7 +744,7 @@ OpenDesign 的 `ant` 设计系统（企业级、数据密集）的令牌值，�
 > 给出的是通用占位色（`#1677FF` 等）并与令牌文件冲突；以**机器可读的
 > `design-tokens.json`（`layer: A1-identity`，`sourceBackedTokens: 56`）为准**。
 
-### 6.7 邮件日报的版式与配色（v1.6 需求变更新增；v1.7 换色与结构微调；v1.9 概览下增一行代码变更行数；v1.10 空态分板块说清；v1.13 增交付流水线板块；v1.15 撤掉提交明细与协作沟通板块）
+### 6.7 邮件日报的版式与配色（v1.6 需求变更新增；v1.7 换色与结构微调；v1.9 概览下增一行代码变更行数；v1.10 空态分板块说清；v1.13 增交付流水线板块；v1.15 撤掉提交明细与协作沟通板块；v1.16 流水线板块改开关默认关、任务行改真实字段）
 
 **(1) 邮件是独立画布，不与展示层共用色板**：`webview/` 用的是 `ant` 设计令牌（§6.5、§6.6(4)），
 而邮件会被转发到任意邮件客户端、主要在手机上阅读，两者不是同一块画布。因此邮件单独定义一套
@@ -786,7 +835,7 @@ v1.8 在"今日总结"之后插入团队级的"今日工程进展"）：
 | 板块 | 空态文案 | 说明 |
 |---|---|---|
 | 代码提交 | 当日无代码提交 | 当天没有任何提交记录 |
-| 任务进展 | 当日无任务状态变更 | 当天没有任务状态流转 |
+| 任务进展 | 当日无任务新建、更新或完成 | 当天没有任务在 `created_at`/`updated_at`/`completed_at` 上落在窗口内（v1.16 口径，见 §3.6） |
 | 协作沟通 | 当日无符合条件的讨论 | 当天群内没有命中关键词的**真人**发言（v1.8.3）。**v1.15 起邮件不再渲染该板块**，此空态只用于 Markdown 与展示页 |
 | 考勤 | 当日无打卡记录 | **采集成功**但本人当天没有打卡记录 |
 | 工程进展 | 今日未记录工程进展 | 本机取不到仓库信息（§6.8(4)）；当日无提交时另附最近一次提交日期（v1.10） |
@@ -798,8 +847,13 @@ v1.8 在"今日总结"之后插入团队级的"今日工程进展"）：
 
 采集失败的来源在顶部用告警块显式列出，严禁静默跳过（§6.1）。
 
-**(6) 「交付流水线」板块（v1.13）**：位于「今日工程进展」**之后**、按成员分组**之前**，
-只在**邮件渠道**出现（展示页保持 v1.2 约定）。内容是一条阶段链 + 四行现状：
+**任务行的显示格式（v1.16）**：任务不是"状态流转"，而是一条条事实，因此每条渲染成
+`task_line(task)`＝「任务标题｜创建 10-24｜已完成 10-25」/「任务标题｜创建 10-24｜未完成｜截止 10-26」。
+只写三件事：是什么、什么时候建的（或完成）、做完没有。**不写**"进行中 → 已完成"这类流转，
+因为飞书根本不返回流转历史（§3.6）。Markdown 与邮件共用同一个函数。
+
+**(6) 「交付流水线」板块（v1.13；v1.16 起由开关控制，默认关闭）**：位于「今日工程进展」**之后**、
+按成员分组**之前**，只在**邮件渠道**出现（展示页保持 v1.2 约定）。内容是一条阶段链 + 四行现状：
 
 ```
 测试门禁 ──▶ 镜像构建 ──▶ 发布到镜像仓库 ──▶ 部署（本期不做）
@@ -812,6 +866,12 @@ v1.8 在"今日总结"之后插入团队级的"今日工程进展"）：
 | 发布 | "推送到 ghcr.io" 或 "未配置" | 工作流文件里是否出现 `ghcr.io` |
 | 最新版本标签 | 如 `v1.14.0` | 远端 `v*` 标签优先，回退 `git tag --sort=-v:refname`（v1.14 改口径：只表示"仓库上最新的版本标签"，不宣称镜像已按此标签发布） |
 | 最近一次运行 | "成功（8 项全部通过），提交 4ebbcbf" | 公开 Check Runs 接口（v1.14）；取不到写"未采集（公开 Check Runs 接口读不到）"，不猜（§3.5） |
+
+**v1.16 的开关**：`config.yaml` 的 `email.show_pipeline`，默认 `false`。
+- `false`：不采集（`pipeline=None`，连那两次 HTTP 都不发）、不渲染 —— 邮件里**连板块标题都不出现**。
+- `true`：与 v1.14 完全一致（含"未采集"降级与"CI 工作流：未配置"的中性说明）。
+- 理由：这是**课程作业的交付证据**，不是每天都变的日报事实。默认把它放进每封邮件，
+  等于让收件人每天读一遍同一张"我的作业交到哪一步"的卡片；需要时打开即可，代码不删。
 
 ### 6.8 今日工程进展板块的取数规则（v1.8 需求变更新增）
 

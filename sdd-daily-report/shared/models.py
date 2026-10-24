@@ -26,13 +26,26 @@ class CommitRecord:
 
 @dataclass
 class TaskRecord:
-    """任务变更记录"""
+    """任务记录（v1.16 按飞书 `GET /task/v2/tasks` 的真实响应结构重写）。
 
-    assignee: str  # 负责人（飞书用户名）
-    title: str  # 任务标题
-    status_from: str  # 原状态
-    status_to: str  # 新状态
-    updated_at: datetime  # 变更时间
+    旧版（v1.0–v1.15）的 `status_from` / `status_to` 是**臆造字段** ——
+    飞书任务接口从来不返回状态流转历史，只返回任务当前状态。真跑时它恒为空串，
+    于是「任务进展」在真实租户里只能是「无记录」。v1.16 换成真实字段：
+    `status`（todo/done）、`created_at`、`due_at`、`completed_at`、`updated_at`。
+    """
+
+    assignee: str  # 负责人（飞书 open_id；取不到时为 "unassigned"）
+    title: str  # 任务标题（summary）
+    status: str  # 任务状态："todo" / "done"（飞书原始值，不翻译）
+    created_at: datetime | None  # 任务创建时间
+    due_at: datetime | None  # 截止时间/日期（未设置时 None）
+    completed_at: datetime | None  # 完成时间（未完成时 None）
+    updated_at: datetime  # 最后一次更新时间
+
+    @property
+    def done(self) -> bool:
+        """是否已完成。以 `status == "done"` 为准（`completed_at` 仅用于显示完成日期）。"""
+        return self.status == "done"
 
 
 @dataclass

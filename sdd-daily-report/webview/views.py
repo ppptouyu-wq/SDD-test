@@ -81,11 +81,17 @@ class CommitView:
 
 @dataclass(frozen=True)
 class TaskView:
-    """任务进展视图。"""
+    """任务进展视图（v1.16：字段与飞书真实任务结构对齐）。
+
+    旧版是 `status_from` / `status_to` 两个字符串，真实数据里恒为空。
+    v1.16 换成 `status`（todo/done）+ 三个时间戳，展示层据此画"已完成/未完成"。
+    """
 
     title: str
-    status_from: str
-    status_to: str
+    status: str = "todo"
+    created_at: str | None = None
+    due_at: str | None = None
+    completed_at: str | None = None
     updated_at: str | None = None
 
 
@@ -284,8 +290,10 @@ def _commit_view(raw: dict) -> CommitView:
 def _task_view(raw: dict) -> TaskView:
     return TaskView(
         title=str(raw.get("title") or ""),
-        status_from=str(raw.get("status_from") or ""),
-        status_to=str(raw.get("status_to") or ""),
+        status=str(raw.get("status") or "todo"),
+        created_at=_opt_str(raw.get("created_at")),
+        due_at=_opt_str(raw.get("due_at")),
+        completed_at=_opt_str(raw.get("completed_at")),
         updated_at=_opt_str(raw.get("updated_at")),
     )
 

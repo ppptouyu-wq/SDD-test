@@ -461,6 +461,24 @@ v1.14 实测 `GET .../commits/{sha}/check-runs` **匿名返回 200** —— 结�
 
 > 对应验收标准：`proposal.md` §3.1 的 v1.16 五条与 §3.3 的 v1.16 一条；`tasks.md` Task 4（v1.16 重写）。
 
+#### 3.6.1 授权链路本身的两种失败（v1.16.2）
+
+一次性授权这条链路自己也会失败，而且失败得很难看，所以单列一节：
+
+1. **错误原因被吞掉**。`/authen/v1/oidc/access_token` 的失败响应体是
+   `{code, error, error_description}` —— **没有** `msg` 字段。旧代码只读 `body["msg"]`，
+   于是「code 无效 / 已过期 / redirect_uri 不匹配」全都显示成「换取用户 Token失败：None」，
+   用户拿不到任何线索。v1.16.2 起按 `msg → error_description → error` 依次取，并把
+   `code` 原样带进文案，同时打一条 WARNING 日志留证。
+2. **回调地址没登记时，连授权页都进不去**。`redirect_uri` 必须是开发者后台「安全设置」
+   里登记过的地址，否则授权页直接报错或白屏，这正是"点了没反应"最常见的原因。
+   在登记这件事完成之前，留一条**明确的备用通道**：`python main.py --lark-user-token <TOKEN>`
+   直接采纳一个已经拿到的 `user_access_token`（飞书「API 调试台」以用户身份调同一个接口时
+   会显示本次请求用的令牌）。代价必须写在输出里：**2 小时后失效、没有 refresh_token**，
+   长期口径仍然是走一次 `--lark-auth`。
+
+> 对应验收标准：`proposal.md` §3.1 v1.16.2 一条；`tasks.md` Task 4 的 v1.16.2 两条。
+
 ## 4. 接口契约
 
 模块的外部接口必须屏蔽内部实现细节。契约必须先于任何一行代码定义。

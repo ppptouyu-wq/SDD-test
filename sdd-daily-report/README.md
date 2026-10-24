@@ -62,7 +62,7 @@
    | ② 真实 GitHub 仓库（2026-04-24，不推送） | 拉真实提交 |
    | ③ 健康检查（--check） | 逐项检查配置 |
    | ④ 今天（真实推送，慎用） | 会真的发邮件/推飞书 |
-   | ⑤ 跑全部测试（pytest） | 495 个用例 |
+   | ⑤ 跑全部测试（pytest） | 501 个用例 |
    | ⑥ 只跑当前打开的测试文件 | 调试单个用例 |
    | ⑦ 展示页：本地只读查看已生成的日报 | 起本地网页看日报（v1.2 新增） |
 
@@ -821,6 +821,15 @@ token 落在 `data/lark_user_token.json`（gitignore），2 小时有效、30 �
 
 **一键复现**：`python main.py --no-push`（日志里 `飞书任务 success=true`，或未授权时给出授权提示）；
 或 `python -m pytest tests/test_lark_task.py tests/test_main.py tests/test_generator.py -q`。
+
+**v1.16.2（授权链路自己的两个坑）**：`--lark-user-token` 是新增的备用通道，
+起因是现场授权时点进去没反应 —— 回调地址 `redirect_uri` 必须先在开发者后台的
+「安全设置」里登记，否则授权页自己就报错。与此同时发现 `/authen/v1/oidc/access_token`
+的失败响应体是 `{code, error, error_description}`（**没有** `msg`），旧代码只读 `msg`，
+于是「授权码已过期」「redirect_uri 不合法」全都显示成「换取用户 Token失败：None」，
+等于把唯一能定位问题的信息吞了。现在按 `msg → error_description → error` 依次取并带上 `code`。
+新增 `tests/test_lark_auth.py`（6 条）钉住这三件事。
+
 
 **v1.16.1（真跑发现的假话）**：第一次真跑就暴露一个缺陷 —— 任务采集失败（未授权）
 时日报仍写「当日无任务新建、更新或完成」。未授权时飞书任务接口**返回 0 条且不报错**，

@@ -220,12 +220,51 @@ class UserTokenManager:
             )
         return str(data.get("app_access_token", ""))
 
+    def adopt_token(self, access_token: str, *, expires_in: float = 7200.0) -> None:
+        """直接采纳一个已经拿到的 user_access_token（v1.16.1）。
+
+        为什么留这个后门：OAuth 授权码链路要求回调地址先登记在开发者后台的
+        安全设置里，没登记时授权页本身就会报错，用户一步都走不动。飞书
+        「API 调试台」可以用用户身份直接调同一个接口，并把本次请求的
+        `user_access_token` 显示出来 —— 把它贴回来就能立刻跑通。
+
+        代价写在明处：没有 `refresh_token`，2 小时后失效，需要重新获取；
+        这只用于"先看到效果"，长期口径仍然是走一次 `--lark-auth`。
+        """
+        token = access_token.strip()
+        if not token:
+            raise CollectorError("user_access_token 不能为空", source="lark:auth")
+        self._token = _Token(
+            value=token, expires_at=self._clock() + float(expires_in)
+        )
+        self._save()
+
     def _handle_token_response(self, response: httpx.Response, *, action: str) -> None:
         if response.status_code >= 400:
             raise CollectorError(f"{action}失败：HTTP {response.status_code}", source="lark:auth")
         body = response.json()
         if body.get("code") not in (0, None):
-            raise CollectorError(f"{action}失败：{body.get('msg')}", source="lark:auth")
+            # v1.16.1：`/authen/v1/oidc/*` 的错误体是 `{code, error, error_description}`，
+            # **没有** `msg` 字段 —— 只读 `msg` 会输出「失败：None」，把真正的原因
+            # （code 无效 / redirect_uri 不匹配 / scope 未开通）全部吞掉。
+            detail = (
+                body.get("msg")
+                or body.get("error_description")
+                or body.get("error")
+                or "飞书响应里没有 msg / error_description"
+            )
+            logger.warning(
+                "飞书 Token 请求被拒绝",
+                extra={
+                    "source": "lark:auth",
+                    "action": action,
+                    "code": body.get("code"),
+                    "detail": detail,
+                },
+            )
+            raise CollectorError(
+                f"{action}失败（code={body.get('code')}）：{detail}", source="lark:auth"
+            )
         data = body.get("data") or {}
         token = str(data.get("access_token", ""))
         if not token:

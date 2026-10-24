@@ -608,6 +608,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="用授权回调里的 code 换取并落盘 user_access_token（v1.16，配合 --lark-auth）",
     )
     parser.add_argument(
+        "--lark-user-token",
+        default=None,
+        metavar="TOKEN",
+        help="直接采纳一个 user_access_token（v1.16.1 后门）：回调地址没登记时"
+        "改用飞书 API 调试台取令牌，2 小时后失效",
+    )
+    parser.add_argument(
         "--working-days-only",
         action="store_true",
         help="仅工作日运行（v1.4）：周末或 config.yaml 中 holidays 命中的日期跳过。"
@@ -649,7 +656,9 @@ def load_dotenv(path: str | Path | None = None) -> int:
     return loaded
 
 
-def _lark_auth(config: AppConfig, *, url_only: bool, code: str | None) -> int:
+def _lark_auth(
+    config: AppConfig, *, url_only: bool, code: str | None, token: str | None = None
+) -> int:
     """飞书用户身份一次性授权（v1.16，tasks.md Task 4 v1.16 验收标准）。
 
     为什么非做不可：`GET /task/v2/tasks`（「我负责的」任务）官方文档只接受
@@ -667,6 +676,21 @@ def _lark_auth(config: AppConfig, *, url_only: bool, code: str | None) -> int:
             print("同意后浏览器会跳到 redirect_uri（页面 404 是正常的），")
             print("把地址栏里 `code=` 后面那一串复制回来执行：")
             print(f"  python main.py --lark-auth-code <CODE>")
+            print()
+            print("如果授权页自己就报错（常见原因：redirect_uri 没登记在开发者后台），")
+            print("改用飞书「API 调试台」以用户身份调一次任务接口，把返回头里的")
+            print("user_access_token 贴回来（2 小时后失效）：")
+            print("  python main.py --lark-user-token <TOKEN>")
+            return 0
+        if token:
+            try:
+                manager.adopt_token(token)
+            except DailyReportError as exc:
+                print(f"写入用户 Token 失败：{exc}")
+                return 1
+            print(f"用户 Token 已落盘：{DEFAULT_TOKEN_FILE}")
+            print("这是手工采纳的令牌，2 小时后失效、没有 refresh_token；")
+            print("长期口径仍是走一次 python main.py --lark-auth 完成授权。")
             return 0
         try:
             manager.exchange_code(code or "")
@@ -696,8 +720,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"加载配置失败：{exc}")
         return 2
 
-    if args.lark_auth or args.lark_auth_code:
-        return _lark_auth(config, url_only=args.lark_auth, code=args.lark_auth_code)
+    if args.lark_auth or args.lark_auth_code or args.lark_user_token:
+        return _lark_auth(
+            config,
+            url_only=args.lark_auth,
+            code=args.lark_auth_code,
+            token=args.lark_user_token,
+        )
 
     if args.check:
         checks = health_check(config)

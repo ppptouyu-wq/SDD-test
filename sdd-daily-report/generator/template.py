@@ -32,6 +32,11 @@ FETCH_FAILED = "数据获取失败"
 ATTENDANCE_UNAVAILABLE = "考勤数据暂不可用"
 # 采集层数据源键名之一，用于判断考勤采集失败（与 main.py SOURCE_LARK_ATTENDANCE 一致）
 ATTENDANCE_SOURCE = "飞书考勤"
+# v1.16.1：任务采集失败时**不能**渲染成"今日无任务"。
+# 飞书任务接口只认用户身份，未授权时应用身份调用返回 0 条且不报错 ——
+# 那正是"假话"的来源。采集失败必须自己说出来（proposal.md §3.1 v1.16）。
+TASKS_UNAVAILABLE = "任务数据读取失败（未授权或接口异常，见顶部数据源告警）"
+TASKS_SOURCE = "飞书任务"
 
 # 提交信息在日报里的呈现上限（proposal.md §3.1 v1.5 / design.md §3.3）：
 # 正文摘要最多保留 3 句、总长不超过 200 字符，超出截断并补省略号。
@@ -148,6 +153,7 @@ def render_markdown(
     sources: dict[str, bool] | None = None,
     attendance_failed: bool = False,
     attendance_collected: bool = False,
+    tasks_failed: bool = False,
 ) -> str:
     """渲染 Markdown 格式日报。
 
@@ -158,6 +164,9 @@ def render_markdown(
     :param attendance_collected: 考勤采集是否**成功**（v1.3）。为 True 且成员无考勤
         记录时渲染"今日无记录"：这是"当天没打卡"，与"采集失败"是两件事，
         不能因为采到了空数组就把整段藏起来。
+    :param tasks_failed: 任务采集是否失败（v1.16.1）。为 True 且成员无任务时渲染
+        "任务数据读取失败"，**不能**渲染成"当日无任务" —— 未授权时飞书接口
+        返回 0 条且不报错，把失败画成"没任务"就是在说假话。
     """
     lines: list[str] = [f"# {team_name} — {day.isoformat()}", ""]
 
@@ -166,6 +175,8 @@ def render_markdown(
     show_unavailable = attendance_failed and not any(
         m.attendance is not None for m in members
     )
+    # v1.16.1：同理，任务采集失败且一条都没拿到时，说"读失败"而不是"没任务"。
+    show_tasks_unavailable = tasks_failed and not any(m.tasks for m in members)
 
     if sources:
         failed = [name for name, ok in sources.items() if not ok]
@@ -206,6 +217,9 @@ def render_markdown(
         if member.tasks:
             for task in member.tasks:
                 lines.append(f"- {task_line(task)}")
+        elif show_tasks_unavailable:
+            # v1.16.1：采集失败 ≠ 今天没任务。两者必须长得不一样。
+            lines.append(f"- {TASKS_UNAVAILABLE}")
         else:
             lines.append(f"- {NO_TASKS}")
         lines.append("")
@@ -700,6 +714,10 @@ def render_email_html(report: DailyReport, *, title: str = "") -> str:
     show_unavailable = attendance_failed and not any(
         member.attendance is not None for member in report.members
     )
+    # v1.16.1：任务采集失败时不能画成"今日无任务"（见 TASKS_UNAVAILABLE 的注释）
+    show_tasks_unavailable = sources.get(TASKS_SOURCE) is False and not any(
+        member.tasks for member in report.members
+    )
 
     commits, tasks, messages = overview_counts(report)
     added, removed = commit_line_totals(report)  # v1.9：概览卡下方那一行
@@ -800,6 +818,14 @@ def render_email_html(report: DailyReport, *, title: str = "") -> str:
         if member.tasks:
             blocks.append(
                 _email_plain_list([_escape(task_line(task)) for task in member.tasks])
+            )
+        elif show_tasks_unavailable:
+            blocks.append(
+                _email_callout(
+                    TASKS_UNAVAILABLE,
+                    background=EMAIL_DANGER_SOFT,
+                    accent=EMAIL_DANGER,
+                )
             )
         else:
             blocks.append(

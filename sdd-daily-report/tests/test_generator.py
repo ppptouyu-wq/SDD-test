@@ -1050,3 +1050,57 @@ def test_markdown_and_email_show_tasks_with_completion_state():
     assert "→ 已完成" not in report.html
 
 
+# ---------------- v1.16.1：任务采集失败 ≠ 今日无任务（真跑发现）----------------
+
+
+def _member_without_tasks() -> MemberReport:
+    return MemberReport(name="张三", github_username="zhangsan", commits=[], tasks=[], messages=[])
+
+
+def test_markdown_says_task_read_failed_instead_of_no_tasks():
+    """真跑发现：飞书任务采集失败时，日报却写「当日无任务新建、更新或完成」。
+
+    未授权时飞书接口返回 0 条且不报错，所以"失败"与"今天真没任务"在数据上
+    长得一样；渲染层若只按"空数组"分流，就会把失败说成"没任务"——那是最坏
+    的一种错法（proposal.md §3.1 v1.16：不可授权时要明确失败）。
+    """
+    report = formatter.generate(
+        [_member_without_tasks()],
+        DAY,
+        "平台研发组",
+        sources={"飞书任务": False},
+    )
+
+    assert template.TASKS_UNAVAILABLE in report.markdown
+    assert template.NO_TASKS not in report.markdown
+    # 顶部告警照旧（两条信息不互斥）
+    assert "飞书任务" in report.markdown
+
+
+def test_email_says_task_read_failed_instead_of_no_tasks():
+    report = formatter.generate(
+        [_member_without_tasks()],
+        DAY,
+        "平台研发组",
+        sources={"飞书任务": False},
+    )
+
+    assert template.TASKS_UNAVAILABLE in report.html
+    assert template.NO_TASKS not in report.html
+
+
+def test_task_empty_state_still_says_no_tasks_when_collection_succeeded():
+    """采集成功但确实没有任务时，仍要说「当日无任务新建、更新或完成」。"""
+    report = formatter.generate(
+        [_member_without_tasks()],
+        DAY,
+        "平台研发组",
+        sources={"飞书任务": True},
+    )
+
+    assert template.NO_TASKS in report.markdown
+    assert template.NO_TASKS in report.html
+    assert template.TASKS_UNAVAILABLE not in report.markdown
+    assert template.TASKS_UNAVAILABLE not in report.html
+
+

@@ -134,6 +134,9 @@ def generate(
     # v1.3：区分"考勤采集成功但本人无记录"，它必须渲染成"今日无记录"，
     # 而不是把考勤段整段留白 —— 留白与"数据获取失败"一样会让读者误判。
     attendance_collected = bool(sources) and sources.get(template.ATTENDANCE_SOURCE) is True
+    # v1.16.1：任务采集失败要自己说出来。未授权时飞书任务接口返回 0 条且不报错，
+    # 把"读不到"画成"今日无任务"就是在说假话（design.md §3.6）。
+    tasks_failed = bool(sources) and sources.get(template.TASKS_SOURCE) is False
 
     try:
         markdown = template.render_markdown(
@@ -143,6 +146,7 @@ def generate(
             sources=sources,
             attendance_failed=attendance_failed,
             attendance_collected=attendance_collected,
+            tasks_failed=tasks_failed,
         )
     except Exception as exc:  # noqa: BLE001 - 转换为领域异常
         raise GeneratorError(f"日报渲染失败：{exc}") from exc
